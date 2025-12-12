@@ -15,7 +15,7 @@ repos:
     rev: 1.7.10
     hooks:
       - id: bandit
-        pass_filesname: false
+        pass_filenames: false
         args: [
           "-c", "pyproject.toml",
           "-r", "."
