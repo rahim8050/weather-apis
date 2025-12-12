@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 import os
 from pathlib import Path
 
+import dj_database_url
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -26,6 +27,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "change-me-in-production")
+DJANGO_ENV = os.getenv("DJANGO_ENV", "development")
+IS_PROD = DJANGO_ENV == "production"
+IS_TEST = bool(os.environ.get("PYTEST_CURRENT_TEST"))
+
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
@@ -76,14 +81,34 @@ WSGI_APPLICATION = "config.wsgi.application"
 
 
 # Database
-# https://docs.djangoproject.com/en/5.1/ref/settings/#databases
-
+# --- Database ---
 DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
-    }
+    "default": dj_database_url.config(
+        # fallback for local dev if DATABASE_URL not set
+        default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
+        conn_max_age=600,
+        ssl_require=IS_PROD,
+    )
 }
+
+# --- MySQL specific tuning ---
+if DATABASES["default"].get("ENGINE") == "django.db.backends.mysql":
+    DATABASES["default"].setdefault("OPTIONS", {})
+    DATABASES["default"]["OPTIONS"].update(
+        {
+            "init_command": "SET sql_mode='STRICT_TRANS_TABLES',"
+            "time_zone='+00:00'",
+            "charset": "utf8mb4",
+            "use_unicode": True,
+        }
+    )
+    DATABASES["default"]["CONN_HEALTH_CHECKS"] = True
+
+# --- Pytest: in-memory SQLite ---
+if IS_TEST:
+    DATABASES = {
+        "default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}
+    }
 
 
 # Password validation
