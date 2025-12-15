@@ -1914,3 +1914,8 @@ Bad Request: /api/v1/auth/password/change/
 Bad Request: /api/v1/auth/register/
 Bad Request: /api/v1/auth/register/
 Forbidden: /api/v1/keys/35f6caf6-de99-4128-b799-d46c85baef8d/
+Unauthorized: /api/v1/auth/login/
+Bad Request: /api/v1/auth/password/change/
+Bad Request: /api/v1/auth/register/
+Bad Request: /api/v1/auth/register/
+Forbidden: /api/v1/keys/7cb8e4f8-0e06-4290-b8f3-553ca460f480/

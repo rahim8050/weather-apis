@@ -23,10 +23,25 @@ class AccountsTests(APITestCase):
     ME_URL: Final[str] = "/api/v1/auth/me/"
     PW_CHANGE_URL: Final[str] = "/api/v1/auth/password/change/"
 
+    def _user(self) -> str:
+        return f"user_{secrets.token_hex(6)}"
+
+    def _email(self, username: str) -> str:
+        return f"{username}@example.com"
+
     def _pw(self) -> str:
         # Validator-friendly and non-static.
-        # (avoids Bandit hardcoded password hits)
-        return f"{secrets.token_urlsafe(16)}Aa1!"
+        lower = "abcdefghijklmnopqrstuvwxyz"
+        upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        digits = "0123456789"
+        special = "!@#$%^&*"
+        return (
+            secrets.choice(upper)
+            + secrets.choice(lower)
+            + secrets.choice(digits)
+            + secrets.choice(special)
+            + secrets.token_urlsafe(16)
+        )
 
     def _as_dict(
         self, value: JSONValue | None, label: str
@@ -42,14 +57,16 @@ class AccountsTests(APITestCase):
 
     def _register(
         self,
-        username: str = "alice",
-        email: str = "alice@example.com",
+        username: str | None = None,
+        email: str | None = None,
         password: str | None = None,
     ) -> JsonClientResponse:
+        u = username or self._user()
+        e = email or self._email(u)
         pw = password or self._pw()
         payload = {
-            "username": username,
-            "email": email,
+            "username": u,
+            "email": e,
             "password": pw,
             "password2": pw,
         }
@@ -80,12 +97,13 @@ class AccountsTests(APITestCase):
         self.assertIn("user", data)
 
     def test_register_password_mismatch_returns_error(self) -> None:
+        u = self._user()
         pw1 = self._pw()
         pw2 = self._pw()
 
         payload = {
-            "username": "bob",
-            "email": "bob@example.com",
+            "username": u,
+            "email": self._email(u),
             "password": pw1,
             "password2": pw2,
         }
@@ -103,15 +121,13 @@ class AccountsTests(APITestCase):
         self,
     ) -> None:
         pw = self._pw()
-        self._register(
-            username="charlie",
-            email="charlie@example.com",
-            password=pw,
-        )
+        base = self._user()
+
+        self._register(username=base, email=self._email(base), password=pw)
 
         resp = self._register(
-            username="CHARLIE",
-            email="CHARLIE@example.com",
+            username=base.upper(),
+            email=self._email(base).upper(),
             password=pw,
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
@@ -119,9 +135,10 @@ class AccountsTests(APITestCase):
 
     def test_login_with_username_identifier(self) -> None:
         pw = self._pw()
-        self._register(username="dana", email="dana@example.com", password=pw)
+        u = self._user()
+        self._register(username=u, email=self._email(u), password=pw)
 
-        resp = self._login("dana", pw)
+        resp = self._login(u, pw)
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
 
         body = resp.json()
@@ -133,28 +150,27 @@ class AccountsTests(APITestCase):
 
     def test_login_with_email_identifier_case_insensitive(self) -> None:
         pw = self._pw()
-        self._register(username="eric", email="eric@example.com", password=pw)
+        u = self._user()
+        e = self._email(u)
+        self._register(username=u, email=e, password=pw)
 
-        resp = self._login("ERIC@EXAMPLE.COM", pw)
+        resp = self._login(e.upper(), pw)
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.json().get("status"), 0)
 
     def test_login_wrong_password_generic_error(self) -> None:
-        real_pw = self._pw()
-        wrong_pw = f"{real_pw}x"
+        pw_ok = self._pw()
+        pw_bad = f"{pw_ok}x"
+        u = self._user()
 
-        self._register(
-            username="frank",
-            email="frank@example.com",
-            password=real_pw,
-        )
+        self._register(username=u, email=self._email(u), password=pw_ok)
 
-        resp = self._login("frank", wrong_pw)
+        resp = self._login(u, pw_bad)
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
         self.assertEqual(resp.json().get("status"), 1)
 
     def test_token_refresh_returns_new_access_token(self) -> None:
-        resp = self._register(username="gina", email="gina@example.com")
+        resp = self._register()
 
         body = resp.json()
         data = self._as_dict(body.get("data"), "data")
@@ -178,7 +194,8 @@ class AccountsTests(APITestCase):
         self.assertIn("access", out_data)
 
     def test_me_endpoint_requires_jwt(self) -> None:
-        resp = self._register(username="hank", email="hank@example.com")
+        u = self._user()
+        resp = self._register(username=u, email=self._email(u))
 
         body = resp.json()
         data = self._as_dict(body.get("data"), "data")
@@ -193,13 +210,14 @@ class AccountsTests(APITestCase):
         self.assertEqual(me_body.get("status"), 0)
 
         me_data = self._as_dict(me_body.get("data"), "data")
-        self.assertEqual(me_data.get("username"), "hank")
+        self.assertEqual(me_data.get("username"), u)
 
     def test_password_change_success_and_failure(self) -> None:
         initial_pw = self._pw()
+        u = self._user()
         resp = self._register(
-            username="ivy",
-            email="ivy@example.com",
+            username=u,
+            email=self._email(u),
             password=initial_pw,
         )
 
@@ -242,5 +260,5 @@ class AccountsTests(APITestCase):
         self.assertEqual(good_resp.json().get("status"), 0)
 
         self.client.credentials()
-        relogin = self._login("ivy", new_pw)
+        relogin = self._login(u, new_pw)
         self.assertEqual(relogin.status_code, status.HTTP_200_OK)
