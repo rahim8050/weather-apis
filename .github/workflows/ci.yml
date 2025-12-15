@@ -36,20 +36,20 @@ jobs:
           --health-retries=10
 
     env:
-      # Make settings portable in CI
+      # CI-safe Django settings
       DJANGO_ENV: "ci"
       DJANGO_DEBUG: "0"
       DJANGO_SECRET_KEY: "ci-secret-key-not-for-prod"
       DJANGO_API_KEY_PEPPER: "ci-pepper-not-a-secret"
 
-      # DB envs (align with your settings)
+      # Database
       MYSQL_HOST: "127.0.0.1"
       MYSQL_PORT: "3306"
       MYSQL_DATABASE: "test_db"
       MYSQL_USER: "test_user"
       MYSQL_PASSWORD: "test_pass"
 
-      # Make Django quieter and deterministic
+      # Python hygiene
       PYTHONDONTWRITEBYTECODE: "1"
       PYTHONUNBUFFERED: "1"
 
@@ -57,7 +57,7 @@ jobs:
       - name: Mark start time
         run: echo "CI_START_TS=$(date +%s)" >> "$GITHUB_ENV"
 
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -70,13 +70,13 @@ jobs:
             pyproject.toml
             poetry.lock
 
-      - name: Install system deps (mysqlclient builds)
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             default-libmysqlclient-dev build-essential pkg-config
 
-      - name: Install Python deps
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip wheel
           if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi
@@ -89,10 +89,10 @@ jobs:
       - name: Ruff (lint)
         run: python -m ruff check .
 
-      - name: Ruff (format check)
+      - name: Ruff (format)
         run: python -m ruff format --check .
 
-      - name: Black (format check)
+      - name: Black (format)
         run: python -m black --check .
 
       - name: MyPy (types)
@@ -106,7 +106,7 @@ jobs:
             python -m bandit -r . -x ".venv,tests,**/migrations/*"
           fi
 
-      - name: Tests
+      - name: Run tests
         run: |
           set -e
           if [ -f manage.py ]; then
@@ -121,23 +121,64 @@ jobs:
           END_TS=$(date +%s)
           echo "CI_DURATION_SEC=$((END_TS - CI_START_TS))" >> "$GITHUB_ENV"
 
-      - name: Notify Telegram (failure only)
-        if: failure()
+      # ---------------- TELEGRAM ----------------
+      - name: Notify Telegram (success or failure)
+        if: ${{ always() && secrets.TELEGRAM_BOT_TOKEN != '' && secrets.TELEGRAM_CHAT_ID != '' }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          if [ -z "${TELEGRAM_BOT_TOKEN}" ] || [ -z "${TELEGRAM_CHAT_ID}" ]; then
-            echo "Telegram secrets not set; skipping notification."
-            exit 0
+          STATUS="${{ job.status }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          if [ "$STATUS" = "success" ]; then
+            ICON="✅"
+            TITLE="CI PASSED"
+          else
+            ICON="❌"
+            TITLE="CI FAILED"
           fi
 
-          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          MSG="❌ CI failed • ${{ github.repository }} • ${{ github.ref_name }} • run #${{ github.run_number }} • ${CI_DURATION_SEC}s • ${RUN_URL}"
+          MSG="${ICON} ${TITLE}
+          Repo: ${{ github.repository }}
+          Branch: ${{ github.ref_name }}
+          Run: #${{ github.run_number }}
+          Duration: ${CI_DURATION_SEC}s
+          ${RUN_URL}"
 
           curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -d "chat_id=${TELEGRAM_CHAT_ID}" \
-            -d "disable_web_page_preview=true" \
-            -d "text=${MSG}"
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "disable_web_page_preview=true" \
+            --data-urlencode "text=${MSG}"
 
-            
+      # ---------------- EMAIL ----------------
+      - name: Notify Email (success or failure)
+        if: ${{ always()
+              && secrets.SMTP_SERVER != ''
+              && secrets.SMTP_PORT != ''
+              && secrets.SMTP_USERNAME != ''
+              && secrets.SMTP_PASSWORD != ''
+              && secrets.CI_EMAIL_TO != '' }}
+        uses: dawidd6/action-send-mail@v6
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: >
+            ${{ job.status == 'success'
+                && '✅ CI PASSED'
+                || '❌ CI FAILED' }}
+            • ${{ github.repository }} • ${{ github.ref_name }}
+          to: ${{ secrets.CI_EMAIL_TO }}
+          from: "Rahim CI <${{ secrets.SMTP_USERNAME }}>"
+          body: |
+            CI STATUS: ${{ job.status }}
+
+            Repository: ${{ github.repository }}
+            Branch:     ${{ github.ref_name }}
+            Run #:      ${{ github.run_number }}
+            Duration:   ${CI_DURATION_SEC}s
+
+            Logs:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
