@@ -5,10 +5,14 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["main"]
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   test-lint:
@@ -32,16 +36,27 @@ jobs:
           --health-retries=10
 
     env:
+      # Make settings portable in CI
+      DJANGO_ENV: "ci"
       DJANGO_DEBUG: "0"
       DJANGO_SECRET_KEY: "ci-secret-key-not-for-prod"
-      # Adjust these to match how your settings read DB config:
+      DJANGO_API_KEY_PEPPER: "ci-pepper-not-a-secret"
+
+      # DB envs (align with your settings)
       MYSQL_HOST: "127.0.0.1"
       MYSQL_PORT: "3306"
       MYSQL_DATABASE: "test_db"
       MYSQL_USER: "test_user"
       MYSQL_PASSWORD: "test_pass"
 
+      # Make Django quieter and deterministic
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+
     steps:
+      - name: Mark start time
+        run: echo "CI_START_TS=$(date +%s)" >> "$GITHUB_ENV"
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -72,20 +87,16 @@ jobs:
           fi
 
       - name: Ruff (lint)
-        run: |
-          python -m ruff check .
+        run: python -m ruff check .
 
       - name: Ruff (format check)
-        run: |
-          python -m ruff format --check .
+        run: python -m ruff format --check .
 
       - name: Black (format check)
-        run: |
-          python -m black --check .
+        run: python -m black --check .
 
       - name: MyPy (types)
-        run: |
-          python -m mypy .
+        run: python -m mypy .
 
       - name: Bandit (security)
         run: |
@@ -99,7 +110,32 @@ jobs:
         run: |
           set -e
           if [ -f manage.py ]; then
-            python manage.py test
+            python manage.py test --verbosity 2 --no-input
           else
             python -m pytest -q
           fi
+
+      - name: Compute duration
+        if: always()
+        run: |
+          END_TS=$(date +%s)
+          echo "CI_DURATION_SEC=$((END_TS - CI_START_TS))" >> "$GITHUB_ENV"
+
+      - name: Notify Telegram (failure only)
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "${TELEGRAM_BOT_TOKEN}" ] || [ -z "${TELEGRAM_CHAT_ID}" ]; then
+            echo "Telegram secrets not set; skipping notification."
+            exit 0
+          fi
+
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          MSG="❌ CI failed • ${{ github.repository }} • ${{ github.ref_name }} • run #${{ github.run_number }} • ${CI_DURATION_SEC}s • ${RUN_URL}"
+
+          curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            -d "disable_web_page_preview=true" \
+            -d "text=${MSG}"
