@@ -1,0 +1,2 @@
+django-stubs[compatible-mypy]
+djangorestframework-stubs[compatible-mypy]
