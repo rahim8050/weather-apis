@@ -140,23 +140,4 @@ jobs:
             -d "disable_web_page_preview=true" \
             -d "text=${MSG}"
 
-        
-      - name: Notify Email (failure only)
-        if: failure() && secrets.SMTP_USERNAME != '' && secrets.SMTP_PASSWORD != '' && secrets.CI_EMAIL_TO != ''
-        uses: dawidd6/action-send-mail@v6
-        with:
-          server_address: ${{ secrets.SMTP_SERVER }}
-          server_port: ${{ secrets.SMTP_PORT }}
-          username: ${{ secrets.SMTP_USERNAME }}
-          password: ${{ secrets.SMTP_PASSWORD }}
-          subject: "❌ CI failed • ${{ github.repository }} • ${{ github.ref_name }} • run #${{ github.run_number }}"
-          to: ${{ secrets.CI_EMAIL_TO }}
-          from: "Rahim CI <${{ secrets.SMTP_USERNAME }}>"
-          body: |
-            CI FAILED
-
-            Repo:      ${{ github.repository }}
-            Branch:    ${{ github.ref_name }}
-            Run:       ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-            Duration:  ${CI_DURATION_SEC}s
-    
+            
