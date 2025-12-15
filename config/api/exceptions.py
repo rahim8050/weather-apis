@@ -1,10 +1,21 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 
-JSONScalar: TypeAlias = str | int | float | bool | None
-JSONValue: TypeAlias = JSONScalar | list["JSONValue"] | dict[str, "JSONValue"]
+if TYPE_CHECKING:
+    from rest_framework.response import Response
+
+
+JSONValue: TypeAlias = (
+    None
+    | bool
+    | int
+    | float
+    | str
+    | list["JSONValue"]
+    | dict[str, "JSONValue"]
+)
 
 
 def _to_json_value(value: object) -> JSONValue:
@@ -17,15 +28,29 @@ def _to_json_value(value: object) -> JSONValue:
     return str(value)
 
 
-def _extract_message_and_errors(data: object) -> tuple[str, JSONValue | None]:
-    if isinstance(data, Mapping):
-        detail = data.get("detail")
-        if isinstance(detail, str):
-            rest = {k: v for k, v in data.items() if k != "detail"}
-            return detail, _to_json_value(rest) if rest else None
-        return "Validation error.", _to_json_value(data)
+def custom_exception_handler(
+    exc: Exception,
+    context: dict[str, Any],
+) -> Response:
+    # Lazy imports: safe even if settings aren't configured at import time.
+    from rest_framework import status
+    from rest_framework.response import Response
+    from rest_framework.views import exception_handler as drf_exception_handler
 
-    if isinstance(data, str):
-        return data, None
+    response = drf_exception_handler(exc, context)
 
-    return "Request failed.", _to_json_value(data)
+    if response is None:
+        return Response(
+            {"status": 1, "message": "Internal server error", "errors": None},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+    detail = _to_json_value(response.data)
+    message = "Request failed"
+    if isinstance(detail, dict):
+        maybe = detail.get("detail")
+        if isinstance(maybe, str):
+            message = maybe
+
+    response.data = {"status": 1, "message": message, "errors": detail}
+    return response
