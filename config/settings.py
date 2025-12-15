@@ -18,6 +18,7 @@ from typing import Any, cast
 
 import dj_database_url
 import environ
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -220,7 +221,18 @@ SIMPLE_JWT = {
     ),
 }
 
-DJANGO_API_KEY_PEPPER = env("DJANGO_API_KEY_PEPPER")
+DJANGO_ENV = env("DJANGO_ENV", default="dev")  # dev | ci | prod | staging
+REQUIRE_SECRETS = DJANGO_ENV in {"prod", "production", "staging"}
+
+DJANGO_API_KEY_PEPPER = env("DJANGO_API_KEY_PEPPER", default=None)
+
+if DJANGO_API_KEY_PEPPER is None:
+    if REQUIRE_SECRETS:
+        raise ImproperlyConfigured(
+            "Set the DJANGO_API_KEY_PEPPER environment variable"
+        )
+    # dev/ci/tests default (not a real secret)
+    DJANGO_API_KEY_PEPPER = "dev-pepper"
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
