@@ -26,4 +26,15 @@ repos:
     rev: v1.11.2
     hooks:
       - id: mypy
-        additional_dependencies: []
+        pass_filenames: false
+        args:
+          - --config-file=pyproject.toml
+          - "."
+        additional_dependencies:
+          - dj_database_url
+          - django-stubs
+          - djangorestframework-stubs
+          - django-environ
+          - django-prometheus
+          - djangorestframework
+          - djangorestframework-simplejwt

@@ -11,31 +11,45 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 
 import os
+import sys
+from datetime import timedelta
 from pathlib import Path
+from typing import Any, cast
 
 import dj_database_url
-from dotenv import load_dotenv
-
-load_dotenv()
+import environ
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+env = environ.Env()
+env.read_env(BASE_DIR / ".env")
+LOG_DIR = BASE_DIR / "logs"
+LOG_DIR.mkdir(exist_ok=True)
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "change-me-in-production")
+SECRET_KEY = env("DJANGO_SECRET_KEY")
 DJANGO_ENV = os.getenv("DJANGO_ENV", "development")
 IS_PROD = DJANGO_ENV == "production"
 IS_TEST = bool(os.environ.get("PYTEST_CURRENT_TEST"))
 
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = env.bool("DJANGO_DEBUG", default=False)
 
-ALLOWED_HOSTS: list[str] = []
+ALLOWED_HOSTS: list[str] = cast(
+    list[str],
+    env.list(
+        "DJANGO_ALLOWED_HOSTS",
+        default=["localhost", "127.0.0.1"],
+    ),
+)
+CORS_ALLOWED_ORIGINS: list[str] = cast(
+    list[str], env.list("DJANGO_CORS_ALLOWED_ORIGINS", default=[])
+)
 
 
 # Application definition
@@ -47,6 +61,11 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django_prometheus",
+    "rest_framework",
+    "rest_framework_simplejwt",
+    "accounts",
+    "api_keys",
 ]
 
 MIDDLEWARE = [
@@ -57,7 +76,21 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "django_prometheus.middleware.PrometheusAfterMiddleware",
 ]
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "file": {
+            "class": "logging.FileHandler",
+            "filename": str(LOG_DIR / "django.log"),
+        },
+        "console": {"class": "logging.StreamHandler"},
+    },
+    "root": {"handlers": ["console", "file"], "level": "INFO"},
+}
 
 ROOT_URLCONF = "config.urls"
 
@@ -151,7 +184,58 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": (
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ),
+    "DEFAULT_PERMISSION_CLASSES": (
+        "rest_framework.permissions.IsAuthenticated",
+    ),
+    "DEFAULT_THROTTLE_CLASSES": (
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+        "rest_framework.throttling.ScopedRateThrottle",
+    ),
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "100/min",
+        "user": "1000/min",
+        "register": "5/min",
+        "login": "10/min",
+        "token_refresh": "20/min",
+    },
+    "EXCEPTION_HANDLER": "config.api.exceptions.custom_exception_handler",
+}
+
+AUTHENTICATION_BACKENDS = [
+    "accounts.auth_backends.UsernameOrEmailBackend",
+    "django.contrib.auth.backends.ModelBackend",
+]
+
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(
+        minutes=env.int("SIMPLE_JWT_ACCESS_MINUTES", default=15)
+    ),
+    "REFRESH_TOKEN_LIFETIME": timedelta(
+        days=env.int("SIMPLE_JWT_REFRESH_DAYS", default=7)
+    ),
+}
+
+DJANGO_API_KEY_PEPPER = env("DJANGO_API_KEY_PEPPER")
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+
+IS_TESTING = (
+    "PYTEST_CURRENT_TEST" in os.environ
+    or "pytest" in sys.argv[0]
+    or "test" in sys.argv
+)
+
+REST_FRAMEWORK = cast(dict[str, Any], REST_FRAMEWORK)
+
+if IS_TESTING:
+    # Throttling is great in production, annoying in unit tests.
+    REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = []
