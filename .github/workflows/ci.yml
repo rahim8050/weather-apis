@@ -146,6 +146,9 @@ jobs:
           echo "telegram_ok=${telegram_ok}" >> "$GITHUB_OUTPUT"
           echo "email_ok=${email_ok}" >> "$GITHUB_OUTPUT"
 
+          echo "telegram_ok=${telegram_ok}"
+          echo "email_ok=${email_ok}"
+
       - name: Notify Telegram
         if: ${{ always() && steps.notify_guard.outputs.telegram_ok == 'true' }}
         continue-on-error: true
@@ -154,6 +157,9 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           STATUS="${{ job.status }}"
+          REPO="${{ github.repository }}"
+          BRANCH="${{ github.ref_name }}"
+          RUNNO="${{ github.run_number }}"
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
           if [ "$STATUS" = "success" ]; then
@@ -164,29 +170,23 @@ jobs:
             TITLE="CI FAILED"
           fi
 
-          cat > /tmp/telegram_msg.txt <<'EOF'
-          __ICON__ __TITLE__
-          Repo: __REPO__
-          Branch: __BRANCH__
-          Run: #__RUNNO__
-          Duration: __DURATION__s
-          __RUNURL__
+          MSG=$(cat <<EOF
+          ${ICON} ${TITLE}
+          Repo: ${REPO}
+          Branch: ${BRANCH}
+          Run: #${RUNNO}
+          Duration: ${CI_DURATION_SEC}s
+          ${RUN_URL}
           EOF
+          )
 
-          sed -i \
-            -e "s/__ICON__/${ICON}/g" \
-            -e "s/__TITLE__/${TITLE}/g" \
-            -e "s/__REPO__/${{ github.repository }}/g" \
-            -e "s/__BRANCH__/${{ github.ref_name }}/g" \
-            -e "s/__RUNNO__/${{ github.run_number }}/g" \
-            -e "s/__DURATION__/${CI_DURATION_SEC}/g" \
-            -e "s|__RUNURL__|${RUN_URL}|g" \
-            /tmp/telegram_msg.txt
-
-          curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+          RESP=$(curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
             --data-urlencode "disable_web_page_preview=true" \
-            --data-urlencode "text=$(cat /tmp/telegram_msg.txt)"
+            --data-urlencode "text=${MSG}")
+
+          echo "Telegram API response:"
+          echo "${RESP}"
 
       - name: Notify Email
         if: ${{ always() && steps.notify_guard.outputs.email_ok == 'true' }}
