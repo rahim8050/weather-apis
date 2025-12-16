@@ -41,6 +41,9 @@ class RegisterView(APIView):
     permission_classes = [AllowAny]
     throttle_scope = "register"
 
+    @extend_schema(
+        request=RegisterSerializer, responses={201: RegisterSerializer}
+    )
     def post(self, request: Request) -> Response:
         serializer = RegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -66,6 +69,7 @@ class LoginView(APIView):
     permission_classes = [AllowAny]
     throttle_scope = "login"
 
+    @extend_schema(request=LoginSerializer, responses={200: LoginSerializer})
     def post(self, request: Request) -> Response:
         serializer = LoginSerializer(
             data=request.data,
@@ -108,6 +112,7 @@ class WrappedTokenRefreshView(SimpleJWTTokenRefresh):
 class MeView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(request=MeSerializer, responses={200: MeSerializer})
     def get(self, request: Request) -> Response:
         user = cast(User, request.user)
         data = _as_json_dict(MeSerializer(user).data)
@@ -118,6 +123,10 @@ class MeView(APIView):
 class PasswordChangeView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        request=PasswordChangeSerializer,
+        responses={200: PasswordChangeSerializer},
+    )
     def post(self, request: Request) -> Response:
         user = cast(User, request.user)
         serializer = PasswordChangeSerializer(

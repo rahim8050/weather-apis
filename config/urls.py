@@ -23,8 +23,11 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
 )
 
+from .views import home
+
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path("", home, name="home"),
     path("", include("django_prometheus.urls")),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path(
