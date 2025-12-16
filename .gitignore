@@ -8,25 +8,20 @@ __pycache__/
 .env
 .venv/
 venv/
-
 # Django / SQLite
 db.sqlite3
 media/
 staticfiles/
-
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-
 # Mypy / Ruff / Coverage
 .mypy_cache/
 .ruff_cache/
 .coverage
 htmlcov/
-
 # logs
 logs/
 *.log
-
