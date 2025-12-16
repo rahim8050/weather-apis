@@ -35,7 +35,11 @@ LOG_DIR.mkdir(exist_ok=True)
 SECRET_KEY = env("DJANGO_SECRET_KEY")
 DJANGO_ENV = os.getenv("DJANGO_ENV", "development")
 IS_PROD = DJANGO_ENV == "production"
-IS_TEST = bool(os.environ.get("PYTEST_CURRENT_TEST"))
+IS_TESTING = (
+    "PYTEST_CURRENT_TEST" in os.environ
+    or "pytest" in sys.argv[0]
+    or "test" in sys.argv
+)
 
 
 # SECURITY WARNING: don't run with debug turned on in production!
@@ -51,6 +55,7 @@ ALLOWED_HOSTS: list[str] = cast(
 CORS_ALLOWED_ORIGINS: list[str] = cast(
     list[str], env.list("DJANGO_CORS_ALLOWED_ORIGINS", default=[])
 )
+API_KEY_THROTTLE_RATE = env("API_KEY_THROTTLE_RATE", default="1000/min")
 
 
 # Application definition
@@ -139,10 +144,45 @@ if DATABASES["default"].get("ENGINE") == "django.db.backends.mysql":
     DATABASES["default"]["CONN_HEALTH_CHECKS"] = True
 
 # --- Pytest: in-memory SQLite ---
-if IS_TEST:
+if IS_TESTING:
     DATABASES = {
         "default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}
     }
+
+
+# Caches
+def _redis_cache(location: str) -> dict[str, Any]:
+    return {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": location,
+        "OPTIONS": {"CLIENT_CLASS": "django_redis.client.DefaultClient"},
+    }
+
+
+REDIS_URL = env("REDIS_URL", default=None)
+
+if REDIS_URL:
+    default_cache_config = _redis_cache(REDIS_URL)
+    throttle_cache_config = dict(default_cache_config)
+else:
+    default_cache_config = {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "default",
+    }
+    throttle_cache_config = {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "throttle",
+    }
+
+if IS_PROD and not REDIS_URL:
+    raise ImproperlyConfigured("Set REDIS_URL for production caching")
+
+CACHES = {
+    "default": default_cache_config,
+    "throttle": throttle_cache_config,
+}
+
+DJANGO_REDIS_IGNORE_EXCEPTIONS = not IS_PROD
 
 
 # Password validation
@@ -188,6 +228,7 @@ STATIC_URL = "static/"
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "api_keys.authentication.ApiKeyAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
@@ -195,6 +236,7 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_CLASSES": (
         "rest_framework.throttling.AnonRateThrottle",
         "rest_framework.throttling.UserRateThrottle",
+        "api_keys.throttling.ApiKeyRateThrottle",
         "rest_framework.throttling.ScopedRateThrottle",
     ),
     "DEFAULT_THROTTLE_RATES": {
@@ -203,6 +245,7 @@ REST_FRAMEWORK = {
         "register": "5/min",
         "login": "10/min",
         "token_refresh": "20/min",
+        "api_key": API_KEY_THROTTLE_RATE,
     },
     "EXCEPTION_HANDLER": "config.api.exceptions.custom_exception_handler",
 }
@@ -240,14 +283,12 @@ if DJANGO_API_KEY_PEPPER is None:
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 
-IS_TESTING = (
-    "PYTEST_CURRENT_TEST" in os.environ
-    or "pytest" in sys.argv[0]
-    or "test" in sys.argv
-)
-
 REST_FRAMEWORK = cast(dict[str, Any], REST_FRAMEWORK)
 
 if IS_TESTING:
-    # Throttling is great in production, annoying in unit tests.
-    REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = []
+    disable_throttle = env.bool(
+        "DISABLE_THROTTLE_IN_TESTS",
+        default=False,
+    )
+    if disable_throttle:
+        REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = []

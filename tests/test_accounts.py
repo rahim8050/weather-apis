@@ -3,6 +3,8 @@ from __future__ import annotations
 import secrets
 from typing import Final, Protocol, TypeAlias, cast
 
+from django.conf import settings
+from django.core.cache import caches
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -262,3 +264,9 @@ class AccountsTests(APITestCase):
         self.client.credentials()
         relogin = self._login(u, new_pw)
         self.assertEqual(relogin.status_code, status.HTTP_200_OK)
+
+    def setUp(self) -> None:
+        super().setUp()
+        caches["default"].clear()
+        if "throttle" in settings.CACHES:
+            caches["throttle"].clear()

@@ -3,7 +3,7 @@ from __future__ import annotations
 from rest_framework.permissions import BasePermission
 from rest_framework.request import Request
 
-from .auth import get_header_key
+from .auth import get_header_key, validate_api_key
 
 
 class HasValidApiKey(BasePermission):
@@ -13,4 +13,4 @@ class HasValidApiKey(BasePermission):
         raw_key = get_header_key(request)
         if not raw_key:
             return False
-        return True
+        return validate_api_key(raw_key) is not None
