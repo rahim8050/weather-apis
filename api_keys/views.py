@@ -4,6 +4,7 @@ from django.contrib.auth.models import AnonymousUser
 from django.db.models import QuerySet
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema
 from rest_framework import generics, status
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
@@ -19,6 +20,7 @@ from .models import ApiKey
 from .serializers import ApiKeyCreateSerializer, ApiKeyListSerializer
 
 
+@extend_schema(auth=["BearerAuth"])
 class ApiKeyView(generics.GenericAPIView):
     authentication_classes = (JWTAuthentication,)
     serializer_class = ApiKeyListSerializer
@@ -51,6 +53,7 @@ class ApiKeyView(generics.GenericAPIView):
         )
 
 
+@extend_schema(auth=["BearerAuth"])
 class ApiKeyRevokeView(APIView):
     authentication_classes = (JWTAuthentication,)
     permission_classes = [IsAuthenticated]
@@ -70,6 +73,7 @@ class ApiKeyRevokeView(APIView):
         return success_response(None, message="API key revoked")
 
 
+@extend_schema(auth=["BearerAuth"])
 class ApiKeyRotateView(APIView):
     authentication_classes = (JWTAuthentication,)
     permission_classes = [IsAuthenticated]

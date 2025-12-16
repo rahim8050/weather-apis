@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TypeAlias, cast
 
 from django.contrib.auth.models import User
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
@@ -35,6 +36,7 @@ def _as_json_dict(value: object) -> dict[str, JSONValue]:
     return cast(dict[str, JSONValue], value)
 
 
+@extend_schema(auth=[])
 class RegisterView(APIView):
     permission_classes = [AllowAny]
     throttle_scope = "register"
@@ -59,6 +61,7 @@ class RegisterView(APIView):
         )
 
 
+@extend_schema(auth=[])
 class LoginView(APIView):
     permission_classes = [AllowAny]
     throttle_scope = "login"
@@ -82,6 +85,7 @@ class LoginView(APIView):
         return success_response(data, message="Login successful")
 
 
+@extend_schema(auth=[])
 class WrappedTokenRefreshView(SimpleJWTTokenRefresh):
     throttle_scope = "token_refresh"
 
@@ -100,6 +104,7 @@ class WrappedTokenRefreshView(SimpleJWTTokenRefresh):
         return success_response(data, message="Token refreshed")
 
 
+@extend_schema(auth=["BearerAuth", "ApiKeyAuth"])
 class MeView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -109,6 +114,7 @@ class MeView(APIView):
         return success_response(data, message="User profile")
 
 
+@extend_schema(auth=["BearerAuth", "ApiKeyAuth"])
 class PasswordChangeView(APIView):
     permission_classes = [IsAuthenticated]
 

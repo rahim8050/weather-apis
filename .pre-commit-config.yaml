@@ -38,3 +38,5 @@ repos:
           - django-prometheus
           - djangorestframework
           - djangorestframework-simplejwt
+          - drf-spectacular
+          

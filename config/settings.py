@@ -69,6 +69,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "django_prometheus",
     "rest_framework",
+    "drf_spectacular",
     "rest_framework_simplejwt",
     "accounts",
     "api_keys",
@@ -248,6 +249,7 @@ REST_FRAMEWORK = {
         "api_key": API_KEY_THROTTLE_RATE,
     },
     "EXCEPTION_HANDLER": "config.api.exceptions.custom_exception_handler",
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
 
 AUTHENTICATION_BACKENDS = [
@@ -281,6 +283,26 @@ if DJANGO_API_KEY_PEPPER is None:
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Weather APIs",
+    "DESCRIPTION": "REST API for user authentication and "
+    "API key lifecycle management.",
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "SECURITY_SCHEMES": {
+        "BearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+        },
+        "ApiKeyAuth": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "X-API-Key",
+        },
+    },
+}
 
 
 REST_FRAMEWORK = cast(dict[str, Any], REST_FRAMEWORK)
