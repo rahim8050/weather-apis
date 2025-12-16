@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import timedelta
 from typing import Any, cast
-from unittest.mock import patch
 
 from django.conf import settings
 from django.core.cache import caches
@@ -10,13 +9,18 @@ from django.test.utils import override_settings
 from django.utils import timezone
 from django.utils.module_loading import import_string
 from rest_framework import status
-from rest_framework.generics import GenericAPIView
+from rest_framework.permissions import AllowAny
+from rest_framework.request import Request
+from rest_framework.response import Response
 from rest_framework.settings import api_settings
-from rest_framework.test import APITestCase
+from rest_framework.test import APIRequestFactory, APITestCase
 from rest_framework.views import APIView
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from api_keys.auth import validate_api_key
+from api_keys.authentication import ApiKeyAuthentication
 from api_keys.models import ApiKey
+from api_keys.throttling import ApiKeyRateThrottle
 
 _RF: dict[str, Any] = cast(dict[str, Any], settings.REST_FRAMEWORK)
 _RF_RATES: dict[str, str] = cast(
@@ -107,12 +111,20 @@ class ApiKeyTests(APITestCase):
     def test_api_key_header_authenticates_requests(self) -> None:
         access, _ = self._register_and_login("headerauth")
         plaintext, api_key = self._create_api_key(access, name="Header Key")
-        self.client.credentials()
 
-        resp = self.client.get(self.keys_url, HTTP_X_API_KEY=plaintext)
+        class ProtectedView(APIView):
+            authentication_classes = (ApiKeyAuthentication,)
+            permission_classes = (AllowAny,)
+
+            def get(self, request: Request) -> Response:  # type: ignore[override]
+                return Response({"ok": True})
+
+        factory = APIRequestFactory()
+        resp = ProtectedView.as_view()(
+            factory.get("/protected", HTTP_X_API_KEY=plaintext)
+        )
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        data = resp.json()["data"]
-        self.assertTrue(any(item["id"] == str(api_key.id) for item in data))
+        self.assertEqual(resp.data["ok"], True)
 
     def test_missing_or_invalid_api_key_denied(self) -> None:
         resp = self.client.get(self.keys_url)
@@ -152,6 +164,72 @@ class ApiKeyTests(APITestCase):
             status.HTTP_401_UNAUTHORIZED,
         )
 
+    def test_api_key_auth_cannot_manage_keys(self) -> None:
+        access, _ = self._register_and_login("onlyjwt")
+        plaintext, api_key = self._create_api_key(access, name="My Key")
+
+        self.client.credentials()
+        list_resp = self.client.get(self.keys_url, HTTP_X_API_KEY=plaintext)
+        self.assertEqual(list_resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+        post_resp = self.client.post(
+            self.keys_url,
+            {"name": "Blocked"},
+            format="json",
+            HTTP_X_API_KEY=plaintext,
+        )
+        self.assertEqual(post_resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+        delete_resp = self.client.delete(
+            f"{self.keys_url}{api_key.id}/",
+            HTTP_X_API_KEY=plaintext,
+        )
+        self.assertEqual(delete_resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+        rotate_resp = self.client.post(
+            f"{self.keys_url}{api_key.id}/rotate/",
+            HTTP_X_API_KEY=plaintext,
+        )
+        self.assertEqual(rotate_resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_rotate_api_key_returns_new_and_revokes_old(self) -> None:
+        access, _ = self._register_and_login("rotate")
+        old_plaintext, old_key = self._create_api_key(access, name="Old Key")
+
+        rotate_resp = self.client.post(
+            f"{self.keys_url}{old_key.id}/rotate/",
+            {"name": "Rotated Key"},
+            format="json",
+            HTTP_AUTHORIZATION=f"Bearer {access}",
+        )
+        self.assertEqual(rotate_resp.status_code, status.HTTP_201_CREATED)
+        body = rotate_resp.json()
+        self.assertEqual(body["status"], 0)
+        data = cast(dict[str, Any], body["data"])
+        new_plaintext = data["api_key"]
+        new_id = data["id"]
+
+        old_key.refresh_from_db()
+        self.assertIsNotNone(old_key.revoked_at)
+        self.assertIsNone(validate_api_key(old_plaintext))
+        self.assertIsNotNone(validate_api_key(new_plaintext))
+        self.assertNotEqual(str(old_key.id), new_id)
+
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        list_resp = self.client.get(self.keys_url)
+        self.assertEqual(list_resp.status_code, status.HTTP_200_OK)
+        for item in list_resp.json()["data"]:
+            self.assertNotIn("api_key", item)
+
+        self.client.credentials()
+        old_auth_resp = self.client.get(
+            self.keys_url,
+            HTTP_X_API_KEY=old_plaintext,
+        )
+        self.assertEqual(
+            old_auth_resp.status_code, status.HTTP_401_UNAUTHORIZED
+        )
+
     @override_settings(
         REST_FRAMEWORK={
             **_RF,
@@ -170,27 +248,57 @@ class ApiKeyTests(APITestCase):
             "api_keys.throttling.ApiKeyRateThrottle"
         )
 
-        with (
-            patch.object(APIView, "throttle_classes", (ApiKeyRateThrottle,)),
-            patch.object(
-                GenericAPIView, "throttle_classes", (ApiKeyRateThrottle,)
-            ),
-        ):
-            access, _ = self._register_and_login("ratelimit")
-            key1, _ = self._create_api_key(access, name="Key One")
-            key2, _ = self._create_api_key(access, name="Key Two")
-            self.client.credentials()
+        class ThrottledView(APIView):
+            authentication_classes = (ApiKeyAuthentication,)
+            permission_classes = (AllowAny,)
+            throttle_classes = (ApiKeyRateThrottle,)
 
-            for _ in range(2):
-                ok_resp = self.client.get(self.keys_url, HTTP_X_API_KEY=key1)
-                self.assertEqual(ok_resp.status_code, status.HTTP_200_OK)
+            def get(self, request: Request) -> Response:  # type: ignore[override]
+                return Response({"ok": True})
 
-            blocked = self.client.get(self.keys_url, HTTP_X_API_KEY=key1)
-            self.assertEqual(
-                blocked.status_code, status.HTTP_429_TOO_MANY_REQUESTS
+        access, _ = self._register_and_login("ratelimit")
+        key1, _ = self._create_api_key(access, name="Key One")
+        key2, _ = self._create_api_key(access, name="Key Two")
+
+        factory = APIRequestFactory()
+        view = ThrottledView.as_view()
+
+        for _ in range(2):
+            ok_resp = view(factory.get("/t", HTTP_X_API_KEY=key1))
+            self.assertEqual(ok_resp.status_code, status.HTTP_200_OK)
+
+        blocked = view(factory.get("/t", HTTP_X_API_KEY=key1))
+        self.assertEqual(
+            blocked.status_code, status.HTTP_429_TOO_MANY_REQUESTS
+        )
+
+        other_key_resp = view(factory.get("/t", HTTP_X_API_KEY=key2))
+        self.assertEqual(other_key_resp.status_code, status.HTTP_200_OK)
+
+    def test_throttle_uses_throttle_cache_alias(self) -> None:
+        throttle = ApiKeyRateThrottle()
+        self.assertIs(throttle.cache, caches["throttle"])
+
+    def test_throttle_ignores_header_without_api_key_auth(self) -> None:
+        access, _ = self._register_and_login("jwtthrottle")
+
+        class JwtThrottleView(APIView):
+            authentication_classes = (JWTAuthentication,)
+            permission_classes = (AllowAny,)
+            throttle_classes = (ApiKeyRateThrottle,)
+
+            def get(self, request: Request) -> Response:  # type: ignore[override]
+                return Response({"ok": True})
+
+        view = JwtThrottleView.as_view()
+        factory = APIRequestFactory()
+
+        for _ in range(3):
+            resp = view(
+                factory.get(
+                    "/t",
+                    HTTP_AUTHORIZATION=f"Bearer {access}",
+                    HTTP_X_API_KEY="wk_live_fake",
+                )
             )
-
-            other_key_resp = self.client.get(
-                self.keys_url, HTTP_X_API_KEY=key2
-            )
-            self.assertEqual(other_key_resp.status_code, status.HTTP_200_OK)
+            self.assertEqual(resp.status_code, status.HTTP_200_OK)

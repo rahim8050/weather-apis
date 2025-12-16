@@ -11,6 +11,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.serializers import Serializer
 from rest_framework.views import APIView
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from config.api.responses import success_response
 
@@ -19,6 +20,7 @@ from .serializers import ApiKeyCreateSerializer, ApiKeyListSerializer
 
 
 class ApiKeyView(generics.GenericAPIView):
+    authentication_classes = (JWTAuthentication,)
     serializer_class = ApiKeyListSerializer
     permission_classes = [IsAuthenticated]
 
@@ -50,6 +52,7 @@ class ApiKeyView(generics.GenericAPIView):
 
 
 class ApiKeyRevokeView(APIView):
+    authentication_classes = (JWTAuthentication,)
     permission_classes = [IsAuthenticated]
 
     def delete(self, request: Request, pk: str) -> Response:
@@ -65,3 +68,34 @@ class ApiKeyRevokeView(APIView):
             api_key.save(update_fields=["revoked_at"])
 
         return success_response(None, message="API key revoked")
+
+
+class ApiKeyRotateView(APIView):
+    authentication_classes = (JWTAuthentication,)
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request, pk: str) -> Response:
+        existing = get_object_or_404(ApiKey, pk=pk, user=request.user)
+
+        if existing.revoked_at is None:
+            existing.revoked_at = timezone.now()
+            existing.save(update_fields=["revoked_at"])
+
+        payload = {
+            "name": request.data.get("name", existing.name),
+            "expires_at": request.data.get("expires_at", existing.expires_at),
+        }
+        serializer = ApiKeyCreateSerializer(
+            data=payload,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+        new_key = serializer.save()
+        out = ApiKeyListSerializer(new_key).data
+        out["api_key"] = getattr(new_key, "plaintext_key", None)
+
+        return success_response(
+            out,
+            message="API key rotated",
+            status_code=status.HTTP_201_CREATED,
+        )
