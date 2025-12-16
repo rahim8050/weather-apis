@@ -55,7 +55,7 @@ ALLOWED_HOSTS: list[str] = cast(
 CORS_ALLOWED_ORIGINS: list[str] = cast(
     list[str], env.list("DJANGO_CORS_ALLOWED_ORIGINS", default=[])
 )
-API_KEY_THROTTLE_RATE = env("API_KEY_THROTTLE_RATE", default="1000/min")
+API_KEY_THROTTLE_RATE = env("API_KEY_THROTTLE_RATE", default="500/min")
 
 
 # Application definition

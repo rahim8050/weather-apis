@@ -20,7 +20,7 @@
 
 ## Rate Limiting
 
-- Per-API-key throttling uses the `api_key` scope with a default of `1000/min` (override via `API_KEY_THROTTLE_RATE`). Each API key is counted independently.
+- Per-API-key throttling uses the `api_key` scope with a default of `500/min` (override via `API_KEY_THROTTLE_RATE`). Each API key is counted independently.
 - User-level limits: anon `100/min`, authenticated user `1000/min`, register `5/min`, login `10/min`, token refresh `20/min`.
 
 ## Security Guarantees
