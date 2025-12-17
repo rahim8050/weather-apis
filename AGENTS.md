@@ -77,13 +77,13 @@ Inspect `config/api/responses.py` and existing endpoints and follow the establis
 
 All endpoints must be documented at **three levels**:
 
-1) **Module docstring** (top of `views.py` / `viewsets.py`)
+1. **Module docstring** (top of `views.py` / `viewsets.py`)
 
 - What the module contains
 - Authentication expectations
 - Response envelope reminder
 
-2) **Class docstring** (APIView / ViewSet)
+1. **Class docstring** (APIView / ViewSet)
 
 - Purpose
 - Auth / permissions
@@ -91,7 +91,7 @@ All endpoints must be documented at **three levels**:
 - Request serializer (if any)
 - Response `data` payload shape in plain English
 
-3) **Method docstring** (`get/post/put/patch/delete`)
+1. **Method docstring** (`get/post/put/patch/delete`)
 
 - Inputs (body/query params)
 - Outputs (envelope + important fields)
@@ -122,7 +122,7 @@ Use `drf_spectacular.utils.inline_serializer(...)` to document the envelope **wi
 
 #### Minimal envelope templates
 
-**Envelope with a serializer as data**
+### Envelope with a serializer as data
 
 ```python
 from drf_spectacular.utils import inline_serializer
