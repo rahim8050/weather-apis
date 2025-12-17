@@ -1,3 +1,10 @@
+# Routes (prefix: /api/v1/auth/):
+# - POST register/ -> RegisterView
+# - POST login/ -> LoginView
+# - POST token/refresh/ -> WrappedTokenRefreshView
+# - GET me/ -> MeView
+# - POST password/change/ -> PasswordChangeView
+
 from django.urls import path
 
 from .views import (

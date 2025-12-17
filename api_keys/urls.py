@@ -1,3 +1,9 @@
+# Routes (prefix: /api/v1/keys/):
+# - GET / -> ApiKeyView (list)
+# - POST / -> ApiKeyView (create)
+# - DELETE /<uuid:pk>/ -> ApiKeyRevokeView
+# - POST /<uuid:pk>/rotate/ -> ApiKeyRotateView
+
 from django.urls import path
 
 from .views import ApiKeyRevokeView, ApiKeyRotateView, ApiKeyView

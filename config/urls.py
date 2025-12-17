@@ -15,6 +15,15 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 
+# Routes:
+# - GET / -> home
+# - /admin/ -> Django admin
+# - /api/schema/ -> OpenAPI schema
+# - /api/docs/ -> Swagger UI
+# - /api/redoc/ -> ReDoc
+# - /api/v1/auth/ -> accounts.urls
+# - /api/v1/keys/ -> api_keys.urls
+
 from django.contrib import admin
 from django.urls import include, path
 from drf_spectacular.views import (
