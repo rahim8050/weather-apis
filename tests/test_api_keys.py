@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from typing import Any, cast
+from unittest.mock import patch
 
 from django.conf import settings
 from django.core.cache import caches
@@ -19,7 +20,8 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from api_keys.auth import validate_api_key
 from api_keys.authentication import ApiKeyAuthentication
-from api_keys.models import ApiKey
+from api_keys.models import ApiKey, ApiKeyScope
+from api_keys.permissions import ApiKeyScopePermission
 from api_keys.throttling import ApiKeyRateThrottle
 
 _RF: dict[str, Any] = cast(dict[str, Any], settings.REST_FRAMEWORK)
@@ -55,11 +57,16 @@ class ApiKeyTests(APITestCase):
         self,
         access: str,
         name: str = "My Key",
+        *,
+        scope: str | None = None,
     ) -> tuple[str, ApiKey]:
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        payload: dict[str, Any] = {"name": name, "expires_at": None}
+        if scope is not None:
+            payload["scope"] = scope
         resp = self.client.post(
             self.keys_url,
-            {"name": name, "expires_at": None},
+            payload,
             format="json",
         )
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
@@ -74,6 +81,7 @@ class ApiKeyTests(APITestCase):
         self.assertNotEqual(api_key.key_hash, plaintext)
         self.assertTrue(api_key.key_hash.startswith("pbkdf2_"))
         self.assertFalse(hasattr(api_key, "api_key"))
+        self.assertEqual(api_key.scope, ApiKeyScope.READ)
 
     def test_list_api_keys_never_exposes_plaintext(self) -> None:
         access, _ = self._register_and_login("apilist")
@@ -86,6 +94,19 @@ class ApiKeyTests(APITestCase):
             self.assertNotIn("api_key", item)
             self.assertNotIn("key_hash", item)
         self.assertNotEqual(api_key.key_hash, plaintext)
+
+    def test_create_api_key_persists_requested_scope(self) -> None:
+        access, _ = self._register_and_login("scopecreate")
+        _, api_key = self._create_api_key(access, scope=ApiKeyScope.WRITE)
+        self.assertEqual(api_key.scope, ApiKeyScope.WRITE)
+
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        list_resp = self.client.get(self.keys_url)
+        self.assertEqual(list_resp.status_code, status.HTTP_200_OK)
+        body = list_resp.json()
+        self.assertEqual(body["status"], 0)
+        scopes = {item["scope"] for item in body["data"]}
+        self.assertIn(ApiKeyScope.WRITE, scopes)
 
     def test_revoke_api_key_and_validate_helper(self) -> None:
         access, _ = self._register_and_login("apirevoke")
@@ -125,6 +146,8 @@ class ApiKeyTests(APITestCase):
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data["ok"], True)
+        api_key.refresh_from_db()
+        self.assertIsNotNone(api_key.last_used_at)
 
     def test_missing_or_invalid_api_key_denied(self) -> None:
         resp = self.client.get(self.keys_url)
@@ -230,6 +253,153 @@ class ApiKeyTests(APITestCase):
             old_auth_resp.status_code, status.HTTP_401_UNAUTHORIZED
         )
 
+    def test_api_key_scope_permission_blocks_unsafe_methods(self) -> None:
+        access, _ = self._register_and_login("scopeperm")
+        plaintext, _ = self._create_api_key(access, scope=ApiKeyScope.READ)
+
+        class ScopedView(APIView):
+            authentication_classes = (ApiKeyAuthentication,)
+            permission_classes = (AllowAny, ApiKeyScopePermission)
+
+            def get(self, request: Request) -> Response:  # type: ignore[override]
+                return Response({"ok": True})
+
+            def post(self, request: Request) -> Response:  # type: ignore[override]
+                return Response({"ok": True})
+
+        factory = APIRequestFactory()
+        view = ScopedView.as_view()
+        ok_resp = view(factory.get("/t", HTTP_X_API_KEY=plaintext))
+        self.assertEqual(ok_resp.status_code, status.HTTP_200_OK)
+
+        blocked_resp = view(factory.post("/t", HTTP_X_API_KEY=plaintext))
+        self.assertEqual(blocked_resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_api_key_scope_permission_does_not_block_non_api_key_auth(
+        self,
+    ) -> None:
+        permission = ApiKeyScopePermission()
+        factory = APIRequestFactory()
+        drf_request = Request(factory.post("/t"))
+        drf_request.auth = "jwt"
+        self.assertTrue(permission.has_permission(drf_request, object()))
+
+    def test_last_used_at_write_is_throttled(self) -> None:
+        access, _ = self._register_and_login("lastused")
+        plaintext, api_key = self._create_api_key(access, name="Used Key")
+        factory = APIRequestFactory()
+
+        class ProtectedView(APIView):
+            authentication_classes = (ApiKeyAuthentication,)
+            permission_classes = (AllowAny,)
+
+            def get(self, request: Request) -> Response:  # type: ignore[override]
+                return Response({"ok": True})
+
+        view = ProtectedView.as_view()
+
+        t0 = timezone.now()
+        with patch("api_keys.auth.timezone.now", return_value=t0):
+            first = view(factory.get("/p", HTTP_X_API_KEY=plaintext))
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        api_key.refresh_from_db()
+        self.assertEqual(api_key.last_used_at, t0)
+
+        t1 = t0 + timedelta(minutes=2)
+        with patch("api_keys.auth.timezone.now", return_value=t1):
+            second = view(factory.get("/p", HTTP_X_API_KEY=plaintext))
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        api_key.refresh_from_db()
+        self.assertEqual(api_key.last_used_at, t0)
+
+        t2 = t0 + timedelta(minutes=6)
+        with patch("api_keys.auth.timezone.now", return_value=t2):
+            third = view(factory.get("/p", HTTP_X_API_KEY=plaintext))
+        self.assertEqual(third.status_code, status.HTTP_200_OK)
+        api_key.refresh_from_db()
+        self.assertEqual(api_key.last_used_at, t2)
+
+    def test_audit_logs_do_not_leak_plaintext(self) -> None:
+        access, _ = self._register_and_login("audit")
+        with self.assertLogs("api_keys", level="INFO") as logs:
+            plaintext, api_key = self._create_api_key(
+                access, name="Audited", scope=ApiKeyScope.WRITE
+            )
+        joined = "\n".join(logs.output)
+        self.assertIn("api_key.created", joined)
+        self.assertIn(f"user_id={api_key.user_id}", joined)
+        self.assertIn(f"key_id={api_key.id}", joined)
+        self.assertNotIn(plaintext, joined)
+
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        with self.assertLogs("api_keys", level="INFO") as revoke_logs:
+            revoke_resp = self.client.delete(f"{self.keys_url}{api_key.id}/")
+        self.assertEqual(revoke_resp.status_code, status.HTTP_200_OK)
+        revoke_joined = "\n".join(revoke_logs.output)
+        self.assertIn("api_key.revoked", revoke_joined)
+        self.assertIn(f"user_id={api_key.user_id}", revoke_joined)
+        self.assertIn(f"key_id={api_key.id}", revoke_joined)
+        self.assertNotIn(plaintext, revoke_joined)
+
+    def test_audit_logs_rotation_does_not_leak_plaintext(self) -> None:
+        access, _ = self._register_and_login("audit-rotate")
+        old_plaintext, api_key = self._create_api_key(
+            access, name="Old", scope=ApiKeyScope.WRITE
+        )
+
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        with self.assertLogs("api_keys", level="INFO") as logs:
+            rotate_resp = self.client.post(
+                f"{self.keys_url}{api_key.id}/rotate/",
+                {"name": "New"},
+                format="json",
+            )
+        self.assertEqual(rotate_resp.status_code, status.HTTP_201_CREATED)
+        new_plaintext = rotate_resp.json()["data"]["api_key"]
+
+        joined = "\n".join(logs.output)
+        self.assertIn("api_key.rotated", joined)
+        self.assertIn(f"user_id={api_key.user_id}", joined)
+        self.assertIn(f"old_key_id={api_key.id}", joined)
+        self.assertNotIn(old_plaintext, joined)
+        self.assertNotIn(new_plaintext, joined)
+
+    def test_audit_logs_api_key_auth_success_and_revoked_failure(self) -> None:
+        access, _ = self._register_and_login("audit-auth")
+        plaintext, api_key = self._create_api_key(access, name="Auth Log Key")
+
+        class ProtectedView(APIView):
+            authentication_classes = (ApiKeyAuthentication,)
+            permission_classes = (AllowAny,)
+
+            def get(self, request: Request) -> Response:  # type: ignore[override]
+                return Response({"ok": True})
+
+        factory = APIRequestFactory()
+        view = ProtectedView.as_view()
+
+        with self.assertLogs("api_keys", level="INFO") as ok_logs:
+            ok_resp = view(factory.get("/p", HTTP_X_API_KEY=plaintext))
+        self.assertEqual(ok_resp.status_code, status.HTTP_200_OK)
+        ok_joined = "\n".join(ok_logs.output)
+        self.assertIn("api_key.auth.success", ok_joined)
+        self.assertIn(f"user_id={api_key.user_id}", ok_joined)
+        self.assertIn(f"key_id={api_key.id}", ok_joined)
+        self.assertNotIn(plaintext, ok_joined)
+
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        self.client.delete(f"{self.keys_url}{api_key.id}/")
+
+        with self.assertLogs("api_keys", level="WARNING") as bad_logs:
+            bad_resp = view(factory.get("/p", HTTP_X_API_KEY=plaintext))
+        self.assertEqual(bad_resp.status_code, status.HTTP_401_UNAUTHORIZED)
+        bad_joined = "\n".join(bad_logs.output)
+        self.assertIn("api_key.auth.failure", bad_joined)
+        self.assertIn("reason=revoked", bad_joined)
+        self.assertIn(f"user_id={api_key.user_id}", bad_joined)
+        self.assertIn(f"key_id={api_key.id}", bad_joined)
+        self.assertNotIn(plaintext, bad_joined)
+
     @override_settings(
         REST_FRAMEWORK={
             **_RF,
@@ -271,6 +441,14 @@ class ApiKeyTests(APITestCase):
         self.assertEqual(
             blocked.status_code, status.HTTP_429_TOO_MANY_REQUESTS
         )
+        self.assertEqual(blocked.data["status"], 1)
+        self.assertEqual(blocked.data["message"], "Too Many Requests")
+        self.assertIsNone(blocked.data["data"])
+        errors = cast(dict[str, Any], blocked.data["errors"])
+        self.assertIn("detail", errors)
+        self.assertIsInstance(errors["detail"], str)
+        self.assertIn("wait", errors)
+        self.assertIsInstance(errors["wait"], (int, float))
 
         other_key_resp = view(factory.get("/t", HTTP_X_API_KEY=key2))
         self.assertEqual(other_key_resp.status_code, status.HTTP_200_OK)

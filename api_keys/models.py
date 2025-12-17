@@ -9,6 +9,12 @@ from django.db import models
 User = get_user_model()
 
 
+class ApiKeyScope(models.TextChoices):
+    READ = "read", "Read"
+    WRITE = "write", "Write"
+    ADMIN = "admin", "Admin"
+
+
 class ApiKey(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(
@@ -18,7 +24,13 @@ class ApiKey(models.Model):
     key_hash = models.CharField(max_length=128, db_index=True)
     prefix = models.CharField(max_length=32)
     last4 = models.CharField(max_length=4)
+    scope = models.CharField(
+        max_length=16,
+        choices=ApiKeyScope.choices,
+        default=ApiKeyScope.READ,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
     expires_at = models.DateTimeField(null=True, blank=True)
     revoked_at = models.DateTimeField(null=True, blank=True)
 

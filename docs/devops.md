@@ -21,7 +21,8 @@ This document is a production-grade onboarding and troubleshooting guide for any
 
 ## 2. Architecture & network picture
 
-```[Developer machine (HTTP client)]
+```text
+[Developer machine (HTTP client)]
           |
       Windows host
     (Firewall + NAT)
@@ -58,7 +59,8 @@ This document is a production-grade onboarding and troubleshooting guide for any
 
 3. **Environment hints (optional but recommended)**:
 
-   ```DJANGO_BIND=0.0.0.0
+   ```text
+   DJANGO_BIND=0.0.0.0
    DJANGO_METRICS_PATH=/metrics
    ```
 
@@ -108,15 +110,18 @@ services:
 1. Start Django inside WSL:
 
    ```bash
-   python manage.py runserver 0.0.0.0:8000```
+   python manage.py runserver 0.0.0.0:8000
+   ```
 
 2. Launch Prometheus:
 
    ```bash
-   docker compose up -d prometheus```
+   docker compose up -d prometheus
+   ```
+
 3. Confirm local metrics:
 
-```bash
+   ```bash
    curl http://localhost:8000/metrics | head
    ```
 
@@ -124,11 +129,15 @@ services:
 
 - **Inside Prometheus container**:
 
-```bash
-  docker exec -it weather-apis-prometheus-1 sh -c "wget -qO- http://host.docker.internal:8000/metrics | head -n 20"```
+  ```bash
+  docker exec -it weather-apis-prometheus-1 sh -c \
+    "wget -qO- http://host.docker.internal:8000/metrics | head -n 20"
+  ```
 - **Simulated request**:
   ```bash
-  curl -H "Host: host.docker.internal" http://host.docker.internal:8000/metrics```
+  curl -H "Host: host.docker.internal" \
+    http://host.docker.internal:8000/metrics
+  ```
 - **Prometheus UI**: Visit `http://localhost:9090/targets` and confirm the Django job state is `UP`.
 
 ---
@@ -150,10 +159,11 @@ netsh advfirewall firewall add rule `
 - Place the command in `scripts/setup-firewall.ps1`.
 - Onboarding script snippet:
 
-```powershell
+  ```powershell
   if (-not (Get-NetFirewallRule -DisplayName "Allow Django Metrics (8000)" -ErrorAction SilentlyContinue)) {
     .\scripts\setup-firewall.ps1
-  }```
+  }
+  ```
 - Run this automatically during developer setup or CI bootstrapping (if allowed).
 
 ---
@@ -172,8 +182,9 @@ netsh interface portproxy add v4tov4 `
 - Verify: `netsh interface portproxy show all`.  
 - Remove when no longer needed:
 
-```powershell
-  netsh interface portproxy delete v4tov4 listenport=8000 listenaddress=0.0.0.0```
+  ```powershell
+  netsh interface portproxy delete v4tov4 listenport=8000 listenaddress=0.0.0.0
+  ```
 - Restart Prometheus after applying portproxy so the target resolves the forwarded port.
 
 ---

@@ -8,6 +8,7 @@ All successful responses are wrapped by
 
 from __future__ import annotations
 
+import logging
 from typing import cast
 
 from django.contrib.auth.models import AnonymousUser
@@ -30,8 +31,21 @@ from config.api.openapi import (
 )
 from config.api.responses import success_response
 
-from .models import ApiKey
+from .models import ApiKey, ApiKeyScope
 from .serializers import ApiKeyCreateSerializer, ApiKeyListSerializer
+
+logger = logging.getLogger(__name__)
+
+
+def _client_ip(request: Request) -> str | None:
+    forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+    if forwarded_for:
+        parts = str(forwarded_for).split(",")
+        if parts:
+            return parts[0].strip() or None
+    remote_addr = request.META.get("REMOTE_ADDR")
+    return str(remote_addr) if remote_addr else None
+
 
 api_keys_error_response = error_envelope_serializer("ApiKeysErrorResponse")
 api_key_list_success_response = success_envelope_serializer(
@@ -52,6 +66,7 @@ api_key_rotate_data_schema = inline_serializer(
     fields={
         "id": serializers.UUIDField(),
         "name": serializers.CharField(),
+        "scope": serializers.ChoiceField(choices=ApiKeyScope.values),
         "prefix": serializers.CharField(),
         "last4": serializers.CharField(),
         "created_at": serializers.DateTimeField(),
@@ -116,6 +131,18 @@ class ApiKeyView(generics.GenericAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         api_key = serializer.save()
+        logger.info(
+            "api_key.created user_id=%s key_id=%s scope=%s path=%s method=%s "
+            "status_code=%s ip=%s ua=%s",
+            getattr(request.user, "id", None),
+            getattr(api_key, "id", None),
+            getattr(api_key, "scope", None),
+            getattr(request, "path", ""),
+            getattr(request, "method", ""),
+            status.HTTP_201_CREATED,
+            _client_ip(request),
+            request.META.get("HTTP_USER_AGENT"),
+        )
         out = self.get_serializer(api_key).data
         return success_response(
             out,
@@ -157,6 +184,22 @@ class ApiKeyRevokeView(APIView):
         if api_key.revoked_at is None:
             api_key.revoked_at = timezone.now()
             api_key.save(update_fields=["revoked_at"])
+            already_revoked = False
+        else:
+            already_revoked = True
+
+        logger.info(
+            "api_key.revoked user_id=%s key_id=%s already_revoked=%s path=%s "
+            "method=%s status_code=%s ip=%s ua=%s",
+            getattr(request.user, "id", None),
+            getattr(api_key, "id", None),
+            already_revoked,
+            getattr(request, "path", ""),
+            getattr(request, "method", ""),
+            status.HTTP_200_OK,
+            _client_ip(request),
+            request.META.get("HTTP_USER_AGENT"),
+        )
 
         return success_response(None, message="API key revoked")
 
@@ -190,9 +233,13 @@ class ApiKeyRotateView(APIView):
         if existing.revoked_at is None:
             existing.revoked_at = timezone.now()
             existing.save(update_fields=["revoked_at"])
+            rotated_from_revoked = False
+        else:
+            rotated_from_revoked = True
 
         payload = {
             "name": request.data.get("name", existing.name),
+            "scope": request.data.get("scope", existing.scope),
             "expires_at": request.data.get("expires_at", existing.expires_at),
         }
         serializer = ApiKeyCreateSerializer(
@@ -203,6 +250,22 @@ class ApiKeyRotateView(APIView):
         new_key = serializer.save()
         out = ApiKeyListSerializer(new_key).data
         out["api_key"] = getattr(new_key, "plaintext_key", None)
+
+        logger.info(
+            "api_key.rotated user_id=%s old_key_id=%s new_key_id=%s "
+            "rotated_from_revoked=%s scope=%s path=%s method=%s "
+            "status_code=%s ip=%s ua=%s",
+            getattr(request.user, "id", None),
+            getattr(existing, "id", None),
+            getattr(new_key, "id", None),
+            rotated_from_revoked,
+            getattr(new_key, "scope", None),
+            getattr(request, "path", ""),
+            getattr(request, "method", ""),
+            status.HTTP_201_CREATED,
+            _client_ip(request),
+            request.META.get("HTTP_USER_AGENT"),
+        )
 
         return success_response(
             out,

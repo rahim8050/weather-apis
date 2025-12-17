@@ -7,7 +7,7 @@ from django.utils import timezone
 from rest_framework import serializers
 
 from .auth import PREFIX_LENGTH, generate_plaintext_key, hash_api_key
-from .models import ApiKey
+from .models import ApiKey, ApiKeyScope
 
 
 class ApiKeyWithPlaintext(Protocol):
@@ -22,6 +22,7 @@ class ApiKeyCreateSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "name",
+            "scope",
             "prefix",
             "last4",
             "api_key",
@@ -46,6 +47,7 @@ class ApiKeyCreateSerializer(serializers.ModelSerializer):
         api_key = ApiKey.objects.create(
             user=request.user,
             name=validated_data["name"],
+            scope=validated_data.get("scope", ApiKeyScope.READ),
             key_hash=hash_api_key(plaintext),
             prefix=plaintext[:PREFIX_LENGTH],
             last4=plaintext[-4:],
@@ -61,6 +63,7 @@ class ApiKeyListSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "name",
+            "scope",
             "prefix",
             "last4",
             "created_at",

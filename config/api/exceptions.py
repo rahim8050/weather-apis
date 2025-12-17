@@ -34,6 +34,7 @@ def custom_exception_handler(
 ) -> Response:
     # Lazy imports: safe even if settings aren't configured at import time.
     from rest_framework import status
+    from rest_framework.exceptions import Throttled
     from rest_framework.response import Response
     from rest_framework.views import exception_handler as drf_exception_handler
 
@@ -44,6 +45,26 @@ def custom_exception_handler(
             {"status": 1, "message": "Internal server error", "errors": None},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
+
+    if isinstance(exc, Throttled):
+        detail = _to_json_value(response.data)
+        errors: dict[str, JSONValue]
+        if isinstance(detail, dict):
+            errors = {**detail}
+        else:
+            errors = {"detail": detail}
+
+        wait = getattr(exc, "wait", None)
+        if wait is not None:
+            errors["wait"] = wait
+
+        response.data = {
+            "status": 1,
+            "message": "Too Many Requests",
+            "data": None,
+            "errors": errors,
+        }
+        return response
 
     detail = _to_json_value(response.data)
     message = "Request failed"

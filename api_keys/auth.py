@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import secrets
+from datetime import timedelta
 
 from django.conf import settings
 from django.contrib.auth.hashers import check_password, make_password
@@ -15,6 +17,9 @@ from .models import ApiKey
 
 API_KEY_PREFIX = "wk_live_"
 PREFIX_LENGTH = 12
+LAST_USED_AT_WRITE_INTERVAL = timedelta(minutes=5)
+
+logger = logging.getLogger(__name__)
 
 
 def generate_plaintext_key() -> str:
@@ -46,18 +51,55 @@ def _eligible_keys(prefix: str, last4: str) -> QuerySet[ApiKey]:
     return active_keys.select_related("user")
 
 
-def validate_api_key(raw_key: str) -> ApiKey | None:
+def _client_ip(request: Request) -> str | None:
+    forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+    if forwarded_for:
+        parts = str(forwarded_for).split(",")
+        if parts:
+            return parts[0].strip() or None
+    remote_addr = request.META.get("REMOTE_ADDR")
+    return str(remote_addr) if remote_addr else None
+
+
+def validate_api_key_with_reason(raw_key: str) -> tuple[ApiKey | None, str]:
+    """Validate an API key and return a reason string for audit logging.
+
+    The returned reason is one of:
+    - "invalid" (bad format or no candidate keys)
+    - "hash_mismatch" (prefix+last4 match exists, but hash check failed)
+    - "revoked" (hash matches, but key is revoked)
+    - "expired" (hash matches, but key is expired)
+    - "ok" (valid)
+    """
+
     if not raw_key or not raw_key.startswith(API_KEY_PREFIX):
-        return None
+        return None, "invalid"
 
     prefix = raw_key[:PREFIX_LENGTH]
     last4 = raw_key[-4:]
     candidate_secret = _peppered_secret(raw_key)
 
-    for key in _eligible_keys(prefix, last4).iterator():
+    now = timezone.now()
+    candidates = ApiKey.objects.filter(
+        prefix=prefix, last4=last4
+    ).select_related("user")
+    found_candidate = False
+    for key in candidates.iterator():
+        found_candidate = True
         if check_password(candidate_secret, key.key_hash):
-            return key
-    return None
+            if key.revoked_at is not None:
+                return key, "revoked"
+            if key.expires_at is not None and key.expires_at <= now:
+                return key, "expired"
+            return key, "ok"
+    if not found_candidate:
+        return None, "invalid"
+    return None, "hash_mismatch"
+
+
+def validate_api_key(raw_key: str) -> ApiKey | None:
+    api_key, reason = validate_api_key_with_reason(raw_key)
+    return api_key if reason == "ok" else None
 
 
 class ApiKeyAuthentication(BaseAuthentication):
@@ -68,14 +110,63 @@ class ApiKeyAuthentication(BaseAuthentication):
     ) -> tuple[AbstractBaseUser, ApiKey] | None:
         raw_key = get_header_key(request)
         if raw_key is None:
+            logger.debug(
+                "api_key.auth.missing path=%s method=%s ip=%s ua=%s",
+                getattr(request, "path", ""),
+                getattr(request, "method", ""),
+                _client_ip(request),
+                request.META.get("HTTP_USER_AGENT"),
+            )
             return None
 
-        api_key = validate_api_key(raw_key)
-        if api_key is None:
+        api_key, reason = validate_api_key_with_reason(raw_key)
+        if api_key is None or reason != "ok":
+            logger.warning(
+                "api_key.auth.failure reason=%s path=%s method=%s "
+                "status_code=%s ip=%s ua=%s user_id=%s key_id=%s",
+                reason,
+                getattr(request, "path", ""),
+                getattr(request, "method", ""),
+                401,
+                _client_ip(request),
+                request.META.get("HTTP_USER_AGENT"),
+                getattr(api_key, "user_id", None) if api_key else None,
+                getattr(api_key, "id", None) if api_key else None,
+            )
             raise AuthenticationFailed("Invalid or expired API key.")
 
         if not api_key.user.is_active:
+            logger.warning(
+                "api_key.auth.failure reason=%s path=%s method=%s "
+                "status_code=%s ip=%s ua=%s user_id=%s key_id=%s",
+                "user_inactive",
+                getattr(request, "path", ""),
+                getattr(request, "method", ""),
+                401,
+                _client_ip(request),
+                request.META.get("HTTP_USER_AGENT"),
+                getattr(api_key, "user_id", None),
+                getattr(api_key, "id", None),
+            )
             raise AuthenticationFailed("User inactive or deleted.")
+
+        now = timezone.now()
+        cutoff = now - LAST_USED_AT_WRITE_INTERVAL
+        ApiKey.objects.filter(id=api_key.id).filter(
+            Q(last_used_at__isnull=True) | Q(last_used_at__lt=cutoff)
+        ).update(last_used_at=now)
+
+        logger.info(
+            "api_key.auth.success path=%s method=%s status_code=%s ip=%s "
+            "ua=%s user_id=%s key_id=%s",
+            getattr(request, "path", ""),
+            getattr(request, "method", ""),
+            200,
+            _client_ip(request),
+            request.META.get("HTTP_USER_AGENT"),
+            getattr(api_key, "user_id", None),
+            getattr(api_key, "id", None),
+        )
 
         return api_key.user, api_key
 
