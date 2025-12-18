@@ -206,7 +206,7 @@ jobs:
             Repository: ${{ github.repository }}
             Branch:     ${{ github.ref_name }}
             Run #:      ${{ github.run_number }}
-            Duration:   ${{ env.CI_DURATION_SEC }}s
+            Duration:   ${{ env.CI_DURATION_SEC }}
 
             Logs:
             ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

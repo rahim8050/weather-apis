@@ -18,6 +18,7 @@ from typing import Any, cast
 
 import dj_database_url
 import environ
+from celery.schedules import crontab
 from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -33,8 +34,11 @@ LOG_DIR.mkdir(exist_ok=True)
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = env("DJANGO_SECRET_KEY")
-DJANGO_ENV = os.getenv("DJANGO_ENV", "development")
+DJANGO_ENV = env(
+    "DJANGO_ENV", default="development"
+)  # development|ci|staging|production
 IS_PROD = DJANGO_ENV == "production"
+REQUIRE_SECRETS = DJANGO_ENV in {"production", "staging"}
 IS_TESTING = (
     "PYTEST_CURRENT_TEST" in os.environ
     or "pytest" in sys.argv[0]
@@ -73,9 +77,12 @@ INSTALLED_APPS = [
     "rest_framework_simplejwt",
     "accounts",
     "api_keys",
+    "farms",
+    "ndvi",
 ]
 
 MIDDLEWARE = [
+    "django_prometheus.middleware.PrometheusBeforeMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -266,8 +273,6 @@ SIMPLE_JWT = {
     ),
 }
 
-DJANGO_ENV = env("DJANGO_ENV", default="dev")  # dev | ci | prod | staging
-REQUIRE_SECRETS = DJANGO_ENV in {"prod", "production", "staging"}
 
 DJANGO_API_KEY_PEPPER = env("DJANGO_API_KEY_PEPPER", default=None)
 
@@ -314,3 +319,55 @@ if IS_TESTING:
     )
     if disable_throttle:
         REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = []
+
+# NDVI defaults and limits
+NDVI_ENGINE = env("NDVI_ENGINE", default="sentinelhub")
+NDVI_MAX_AREA_KM2 = env.float("NDVI_MAX_AREA_KM2", default=5000.0)
+NDVI_MAX_DATERANGE_DAYS = env.int("NDVI_MAX_DATERANGE_DAYS", default=370)
+NDVI_LOCK_TIMEOUT_SECONDS = env.int("NDVI_LOCK_TIMEOUT_SECONDS", default=300)
+NDVI_CACHE_TTL_TIMESERIES_SECONDS = env.int(
+    "NDVI_CACHE_TTL_TIMESERIES_SECONDS",
+    default=86400,
+)
+NDVI_CACHE_TTL_LATEST_SECONDS = env.int(
+    "NDVI_CACHE_TTL_LATEST_SECONDS",
+    default=21600,
+)
+NDVI_DEFAULT_STEP_DAYS = env.int("NDVI_DEFAULT_STEP_DAYS", default=7)
+NDVI_DEFAULT_MAX_CLOUD = env.int("NDVI_DEFAULT_MAX_CLOUD", default=30)
+NDVI_DEFAULT_LOOKBACK_DAYS = env.int("NDVI_DEFAULT_LOOKBACK_DAYS", default=14)
+NDVI_MANUAL_REFRESH_COOLDOWN_SECONDS = env.int(
+    "NDVI_MANUAL_REFRESH_COOLDOWN_SECONDS",
+    default=900,
+)
+NDVI_REQUEST_TIMEOUT_SECONDS = env.float(
+    "NDVI_REQUEST_TIMEOUT_SECONDS",
+    default=20,
+)
+
+# Celery
+CELERY_BROKER_URL = env("CELERY_BROKER_URL", default=REDIS_URL or "memory://")
+CELERY_RESULT_BACKEND = env(
+    "CELERY_RESULT_BACKEND",
+    default="cache+memory://",
+)
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TASK_ALWAYS_EAGER = env.bool(
+    "CELERY_TASK_ALWAYS_EAGER",
+    default=IS_TESTING,
+)
+CELERY_TASK_EAGER_PROPAGATES = True
+CELERY_BEAT_SCHEDULE = {
+    "ndvi-daily-refresh": {
+        "task": "ndvi.tasks.enqueue_daily_refresh",
+        "schedule": crontab(hour=3, minute=15),
+    },
+    "ndvi-weekly-gap-fill": {
+        "task": "ndvi.tasks.enqueue_weekly_gap_fill",
+        "schedule": crontab(hour=4, minute=0, day_of_week="sun"),
+    },
+}
+CELERY_ENABLE_UTC = True
+CELERY_TIMEZONE = "UTC"

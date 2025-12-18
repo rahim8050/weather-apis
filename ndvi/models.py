@@ -1,0 +1,124 @@
+from __future__ import annotations
+
+from datetime import datetime
+
+from django.conf import settings
+from django.db import models
+from django.utils import timezone
+
+from farms.models import Farm
+
+
+class NdviObservation(models.Model):
+    """Materialized NDVI observation for a farm and date bucket."""
+
+    farm = models.ForeignKey(
+        Farm, on_delete=models.CASCADE, related_name="ndvi_observations"
+    )
+    engine = models.CharField(max_length=64)
+    bucket_date = models.DateField()
+    mean = models.FloatField()
+    min = models.FloatField(null=True, blank=True)
+    max = models.FloatField(null=True, blank=True)
+    sample_count = models.IntegerField(null=True, blank=True)
+    cloud_fraction = models.FloatField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["farm", "engine", "bucket_date"],
+                name="uniq_ndvi_observation_farm_engine_bucket",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["farm", "bucket_date"]),
+            models.Index(fields=["engine", "bucket_date"]),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"NDVI {self.bucket_date} farm={self.farm_id} engine={self.engine}"
+        )
+
+
+class NdviJob(models.Model):
+    """Idempotent NDVI job record tracked for Celery tasks."""
+
+    class JobType(models.TextChoices):
+        REFRESH_LATEST = "refresh_latest", "Refresh latest"
+        GAP_FILL = "gap_fill", "Gap fill"
+        BACKFILL = "backfill", "Backfill"
+
+    class JobStatus(models.TextChoices):
+        QUEUED = "queued", "Queued"
+        RUNNING = "running", "Running"
+        SUCCESS = "success", "Success"
+        FAILED = "failed", "Failed"
+
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="ndvi_jobs",
+    )
+    farm = models.ForeignKey(
+        Farm,
+        on_delete=models.CASCADE,
+        related_name="ndvi_jobs",
+    )
+    engine = models.CharField(max_length=64)
+    job_type = models.CharField(max_length=32, choices=JobType.choices)
+    start = models.DateField(null=True, blank=True)
+    end = models.DateField(null=True, blank=True)
+    step_days = models.PositiveIntegerField(null=True, blank=True)
+    max_cloud = models.PositiveIntegerField(null=True, blank=True)
+    lookback_days = models.PositiveIntegerField(null=True, blank=True)
+    request_hash = models.CharField(max_length=128, db_index=True)
+    status = models.CharField(
+        max_length=16,
+        choices=JobStatus.choices,
+        default=JobStatus.QUEUED,
+    )
+    attempts = models.PositiveIntegerField(default=0)
+    last_error = models.TextField(null=True, blank=True)
+    locked_until = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["owner", "farm", "engine", "request_hash"],
+                condition=models.Q(status__in=["queued", "running"]),
+                name="uniq_active_ndvi_job",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["owner", "farm", "status"]),
+            models.Index(fields=["request_hash"]),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"NdviJob {self.id} type={self.job_type} "
+            f"farm={self.farm_id} status={self.status}"
+        )
+
+    def mark_running(self, locked_until: datetime | None = None) -> None:
+        self.status = self.JobStatus.RUNNING
+        self.started_at = timezone.now()
+        if locked_until:
+            self.locked_until = locked_until
+        self.attempts += 1
+        self.save(
+            update_fields=["status", "started_at", "locked_until", "attempts"]
+        )
+
+    def mark_finished(self, status: str, error: str | None = None) -> None:
+        self.status = status
+        self.finished_at = timezone.now()
+        self.last_error = error
+        fields = ["status", "finished_at", "last_error"]
+        self.save(update_fields=fields)

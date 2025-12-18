@@ -1,0 +1,320 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import math
+from collections.abc import Iterable
+from dataclasses import dataclass
+from datetime import date, timedelta
+from decimal import Decimal
+from typing import Any
+
+from django.conf import settings
+from django.core.cache import caches
+from django.db import transaction
+from rest_framework.exceptions import ValidationError
+
+from farms.models import Farm
+
+from .engines.base import BBox, NDVIEngine, NdviPoint
+from .engines.sentinelhub import SentinelHubEngine
+from .metrics import ndvi_cache_hit_total, ndvi_jobs_total
+from .models import NdviJob, NdviObservation
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_ENGINE = getattr(settings, "NDVI_ENGINE", "sentinelhub")
+MAX_AREA_KM2 = float(getattr(settings, "NDVI_MAX_AREA_KM2", 5000.0))
+MAX_DATERANGE_DAYS = int(getattr(settings, "NDVI_MAX_DATERANGE_DAYS", 370))
+DEFAULT_STEP_DAYS = int(getattr(settings, "NDVI_DEFAULT_STEP_DAYS", 7))
+DEFAULT_MAX_CLOUD = int(getattr(settings, "NDVI_DEFAULT_MAX_CLOUD", 30))
+DEFAULT_LOOKBACK_DAYS = int(
+    getattr(settings, "NDVI_DEFAULT_LOOKBACK_DAYS", 14)
+)
+LOCK_TIMEOUT_SECONDS = int(getattr(settings, "NDVI_LOCK_TIMEOUT_SECONDS", 60))
+CACHE_TTL_TIMESERIES = int(
+    getattr(settings, "NDVI_CACHE_TTL_TIMESERIES_SECONDS", 86400)
+)
+CACHE_TTL_LATEST = int(
+    getattr(settings, "NDVI_CACHE_TTL_LATEST_SECONDS", 21600)
+)
+
+
+@dataclass(frozen=True)
+class TimeseriesParams:
+    start: date
+    end: date
+    step_days: int
+    max_cloud: int
+
+
+@dataclass(frozen=True)
+class LatestParams:
+    lookback_days: int
+    max_cloud: int
+
+
+def get_engine(engine_name: str | None = None) -> NDVIEngine:
+    engine = (engine_name or DEFAULT_ENGINE).lower()
+    if engine == "sentinelhub":
+        return SentinelHubEngine()
+    raise ValueError(f"Unsupported NDVI engine: {engine}")
+
+
+def normalize_bbox(farm: Farm) -> BBox:
+    if (
+        farm.bbox_south is None
+        or farm.bbox_west is None
+        or farm.bbox_north is None
+        or farm.bbox_east is None
+    ):
+        raise ValidationError("Farm must include a bounding box for NDVI.")
+    return BBox(
+        south=Decimal(farm.bbox_south),
+        west=Decimal(farm.bbox_west),
+        north=Decimal(farm.bbox_north),
+        east=Decimal(farm.bbox_east),
+    )
+
+
+def _approx_area_km2(bbox: BBox) -> float:
+    mean_lat = (bbox.north + bbox.south) / Decimal(2)
+    lat_km = (bbox.north - bbox.south) * Decimal("111.32")
+    lon_km = (
+        (bbox.east - bbox.west)
+        * Decimal(math.cos(math.radians(float(mean_lat))))
+        * Decimal("111.32")
+    )
+    area = abs(lat_km * lon_km)
+    return float(area)
+
+
+def normalize_timeseries_params(
+    start: date,
+    end: date,
+    step_days: int | None,
+    max_cloud: int | None,
+) -> TimeseriesParams:
+    if start > end:
+        raise ValidationError("start must be on or before end.")
+
+    delta_days = (end - start).days
+    if delta_days > MAX_DATERANGE_DAYS:
+        raise ValidationError(
+            "Requested date range exceeds NDVI_MAX_DATERANGE_DAYS."
+        )
+
+    step = step_days or DEFAULT_STEP_DAYS
+    step = max(1, min(step, 30))
+
+    cloud = max_cloud if max_cloud is not None else DEFAULT_MAX_CLOUD
+    cloud = max(0, min(cloud, 100))
+
+    return TimeseriesParams(
+        start=start, end=end, step_days=step, max_cloud=cloud
+    )
+
+
+def normalize_latest_params(
+    lookback_days: int | None,
+    max_cloud: int | None,
+) -> LatestParams:
+    lookback = lookback_days or DEFAULT_LOOKBACK_DAYS
+    lookback = max(1, min(lookback, MAX_DATERANGE_DAYS))
+
+    cloud = max_cloud if max_cloud is not None else DEFAULT_MAX_CLOUD
+    cloud = max(0, min(cloud, 100))
+
+    return LatestParams(lookback_days=lookback, max_cloud=cloud)
+
+
+def hash_request(
+    *,
+    engine: str,
+    owner_id: int,
+    farm_id: int,
+    params: dict[str, Any],
+) -> str:
+    normalized = json.dumps(
+        {
+            "engine": engine,
+            "owner": owner_id,
+            "farm": farm_id,
+            "params": params,
+        },
+        sort_keys=True,
+        default=str,
+    )
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def expected_buckets(start: date, end: date, step_days: int) -> list[date]:
+    buckets: list[date] = []
+    cursor = start
+    while cursor <= end:
+        buckets.append(cursor)
+        cursor = cursor + timedelta(days=step_days)
+    return buckets
+
+
+def detect_gaps(
+    existing_dates: set[date], expected: Iterable[date]
+) -> list[date]:
+    missing: list[date] = []
+    for bucket in expected:
+        if bucket not in existing_dates:
+            missing.append(bucket)
+    return missing
+
+
+def acquire_lock(request_hash: str, *, timeout: int | None = None) -> bool:
+    ttl = timeout or LOCK_TIMEOUT_SECONDS
+    cache = caches["default"]
+    key = f"ndvi:lock:{request_hash}"
+    acquired = cache.add(key, "1", ttl)
+    return bool(acquired)
+
+
+def cache_timeseries_response(
+    owner_id: int,
+    farm_id: int,
+    engine: str,
+    params: TimeseriesParams,
+    payload: dict[str, Any],
+) -> None:
+    cache = caches["default"]
+    key = (
+        f"ndvi:cache:ts:{owner_id}:{farm_id}:{engine}:"
+        f"{params.start}:{params.end}:{params.step_days}:{params.max_cloud}"
+    )
+    cache.set(key, payload, CACHE_TTL_TIMESERIES)
+
+
+def get_cached_timeseries_response(
+    owner_id: int,
+    farm_id: int,
+    engine: str,
+    params: TimeseriesParams,
+) -> dict[str, Any] | None:
+    cache = caches["default"]
+    key = (
+        f"ndvi:cache:ts:{owner_id}:{farm_id}:{engine}:"
+        f"{params.start}:{params.end}:{params.step_days}:{params.max_cloud}"
+    )
+    cached = cache.get(key)
+    if cached:
+        ndvi_cache_hit_total.labels(layer="timeseries").inc()
+    return cached
+
+
+def cache_latest_response(
+    owner_id: int,
+    farm_id: int,
+    engine: str,
+    params: LatestParams,
+    payload: dict[str, Any],
+) -> None:
+    cache = caches["default"]
+    key = (
+        "ndvi:cache:latest:"
+        f"{owner_id}:{farm_id}:{engine}:"
+        f"{params.lookback_days}:{params.max_cloud}"
+    )
+    cache.set(key, payload, CACHE_TTL_LATEST)
+
+
+def get_cached_latest_response(
+    owner_id: int,
+    farm_id: int,
+    engine: str,
+    params: LatestParams,
+) -> dict[str, Any] | None:
+    cache = caches["default"]
+    key = (
+        "ndvi:cache:latest:"
+        f"{owner_id}:{farm_id}:{engine}:"
+        f"{params.lookback_days}:{params.max_cloud}"
+    )
+    cached = cache.get(key)
+    if cached:
+        ndvi_cache_hit_total.labels(layer="latest").inc()
+    return cached
+
+
+def enforce_quota(farm: Farm, bbox: BBox) -> None:
+    area_km2 = _approx_area_km2(bbox)
+    if area_km2 > MAX_AREA_KM2:
+        raise ValidationError("Requested area exceeds NDVI_MAX_AREA_KM2.")
+
+
+def upsert_observations(
+    *,
+    farm: Farm,
+    engine: str,
+    points: Iterable[NdviPoint],
+) -> list[NdviObservation]:
+    saved: list[NdviObservation] = []
+    with transaction.atomic():
+        for point in points:
+            obj, _ = NdviObservation.objects.update_or_create(
+                farm=farm,
+                engine=engine,
+                bucket_date=point.date,
+                defaults={
+                    "mean": point.mean,
+                    "min": point.min,
+                    "max": point.max,
+                    "sample_count": point.sample_count,
+                    "cloud_fraction": point.cloud_fraction,
+                },
+            )
+            saved.append(obj)
+    return saved
+
+
+def enqueue_job(
+    *,
+    owner_id: int,
+    farm: Farm,
+    engine: str,
+    job_type: str,
+    params: dict[str, Any],
+) -> NdviJob:
+    request_hash = hash_request(
+        engine=engine, owner_id=owner_id, farm_id=farm.id, params=params
+    )
+    existing = NdviJob.objects.filter(
+        owner_id=owner_id,
+        farm=farm,
+        engine=engine,
+        request_hash=request_hash,
+        status__in=[NdviJob.JobStatus.QUEUED, NdviJob.JobStatus.RUNNING],
+    ).first()
+    if existing:
+        return existing
+
+    job = NdviJob.objects.create(
+        owner_id=owner_id,
+        farm=farm,
+        engine=engine,
+        job_type=job_type,
+        request_hash=request_hash,
+        status=NdviJob.JobStatus.QUEUED,
+        start=params.get("start"),
+        end=params.get("end"),
+        step_days=params.get("step_days"),
+        max_cloud=params.get("max_cloud"),
+        lookback_days=params.get("lookback_days"),
+    )
+    ndvi_jobs_total.labels(
+        status=job.status, type=job_type, engine=engine
+    ).inc()
+    return job
+
+
+def is_stale(observation: NdviObservation | None, lookback_days: int) -> bool:
+    if observation is None:
+        return True
+    today = date.today()
+    return (today - observation.bucket_date).days > lookback_days

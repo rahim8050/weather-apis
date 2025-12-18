@@ -19,6 +19,17 @@ dependencies = [
 [tool.black]
 line-length = 79
 target-version = ["py311"]
+extend-exclude = '''
+/(
+  \.venv
+| venv
+| node_modules
+| staticfiles
+| dist
+| build
+| \.git
+)/
+'''
 
 [tool.ruff]
 line-length = 79
@@ -27,7 +38,7 @@ exclude = ["**/migrations/**"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "N", "S", "ANN"]
-ignore = ["ANN101", "ANN102", "ANN401"]
+ignore = ["ANN401","ANN102","ANN101"]
 
 [tool.bandit]
 skips = ["B101"]
@@ -63,4 +74,8 @@ ignore_errors = true
 
 [[tool.mypy.overrides]]
 module = ["environ"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["celery", "celery.schedules"]
 ignore_missing_imports = true

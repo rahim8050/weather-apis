@@ -1,0 +1,233 @@
+from __future__ import annotations
+
+import secrets
+from datetime import date
+from typing import Any
+from unittest.mock import MagicMock, patch
+
+from django.contrib.auth import get_user_model
+from django.core.cache import caches
+from rest_framework import status
+from rest_framework.test import APITestCase
+
+from farms.models import Farm
+from ndvi.engines.base import NdviPoint
+from ndvi.engines.sentinelhub import SentinelHubEngine
+from ndvi.models import NdviJob, NdviObservation
+from ndvi.services import DEFAULT_ENGINE, TimeseriesParams, hash_request
+from ndvi.tasks import run_ndvi_job
+
+
+class NdviApiTests(APITestCase):
+    def setUp(self) -> None:
+        caches["default"].clear()
+        password = secrets.token_urlsafe(16)
+        self.user = get_user_model().objects.create_user(
+            username="owner",
+            password=password,
+            email="owner@example.com",
+        )
+        self.other = get_user_model().objects.create_user(
+            username="other",
+            password=password,
+            email="other@example.com",
+        )
+        self.farm = Farm.objects.create(
+            owner=self.user,
+            name="Farm A",
+            slug="farm-a",
+            bbox_south=0.0,
+            bbox_west=0.0,
+            bbox_north=0.2,
+            bbox_east=0.2,
+            is_active=True,
+        )
+        self.timeseries_url = f"/api/v1/farms/{self.farm.id}/ndvi/timeseries/"
+        self.latest_url = f"/api/v1/farms/{self.farm.id}/ndvi/latest/"
+        self.refresh_url = f"/api/v1/farms/{self.farm.id}/ndvi/refresh/"
+
+    def test_owner_isolation(self) -> None:
+        """Users cannot read NDVI for farms they do not own."""
+
+        self.client.force_authenticate(user=self.other)
+        resp = self.client.get(
+            self.timeseries_url,
+            {"start": "2024-01-01", "end": "2024-01-10"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_bbox_required(self) -> None:
+        """Missing bounding box returns 400."""
+
+        farm = Farm.objects.create(
+            owner=self.user,
+            name="No bbox",
+            slug="nobbox",
+            is_active=True,
+        )
+        self.client.force_authenticate(user=self.user)
+        url = f"/api/v1/farms/{farm.id}/ndvi/timeseries/"
+        resp = self.client.get(
+            url, {"start": "2024-01-01", "end": "2024-01-02"}, format="json"
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    @patch("ndvi.views.run_ndvi_job.delay")
+    def test_gap_detection_enqueues_job(self, mock_delay: MagicMock) -> None:
+        """Gap detection schedules a gap-fill job without blocking."""
+
+        NdviObservation.objects.create(
+            farm=self.farm,
+            engine=DEFAULT_ENGINE,
+            bucket_date=date(2024, 1, 1),
+            mean=0.1,
+        )
+        self.client.force_authenticate(user=self.user)
+        payload = {
+            "start": "2024-01-01",
+            "end": "2024-01-15",
+            "step_days": "7",
+        }
+        resp = self.client.get(self.timeseries_url, payload, format="json")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        body = resp.json()
+        data = body.get("data", {})
+        self.assertTrue(data.get("is_partial"))
+        self.assertEqual(data.get("missing_buckets_count"), 2)
+        self.assertEqual(
+            NdviJob.objects.filter(job_type=NdviJob.JobType.GAP_FILL).count(),
+            1,
+        )
+        mock_delay.assert_called_once()
+
+    @patch("ndvi.views.run_ndvi_job.delay")
+    def test_idempotent_job_creation(self, mock_delay: MagicMock) -> None:
+        """Same params create a single queued job."""
+
+        self.client.force_authenticate(user=self.user)
+        payload = {
+            "start": "2024-02-01",
+            "end": "2024-02-15",
+            "step_days": "7",
+        }
+        first = self.client.get(self.timeseries_url, payload, format="json")
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        second = self.client.get(self.timeseries_url, payload, format="json")
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            NdviJob.objects.filter(job_type=NdviJob.JobType.GAP_FILL).count(),
+            1,
+        )
+        mock_delay.assert_called_once()
+
+    def test_lock_prevents_duplicate_upstream_calls(self) -> None:
+        """Distributed lock ensures engine invoked once."""
+
+        params = TimeseriesParams(
+            start=date(2024, 1, 1),
+            end=date(2024, 1, 7),
+            step_days=7,
+            max_cloud=30,
+        )
+        request_hash = hash_request(
+            engine=DEFAULT_ENGINE,
+            owner_id=self.user.id,
+            farm_id=self.farm.id,
+            params={
+                "start": params.start,
+                "end": params.end,
+                "step_days": params.step_days,
+                "max_cloud": params.max_cloud,
+            },
+        )
+        job = NdviJob.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            engine=DEFAULT_ENGINE,
+            job_type=NdviJob.JobType.GAP_FILL,
+            start=params.start,
+            end=params.end,
+            step_days=params.step_days,
+            max_cloud=params.max_cloud,
+            request_hash=request_hash,
+        )
+
+        class DummyEngine:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def get_timeseries(self, **_: Any) -> list[NdviPoint]:
+                self.calls += 1
+                return [NdviPoint(date=date(2024, 1, 1), mean=0.2)]
+
+            def get_latest(
+                self, **_: Any
+            ) -> NdviPoint | None:  # pragma: no cover - not used
+                return None
+
+        dummy = DummyEngine()
+        with patch("ndvi.tasks.get_engine", return_value=dummy):
+            caches["default"].clear()
+            result1 = run_ndvi_job.apply(args=[job.id]).get()
+            result2 = run_ndvi_job.apply(args=[job.id]).get()
+
+        self.assertEqual(dummy.calls, 1)
+        self.assertEqual(result1, "ok")
+        self.assertEqual(result2, "locked")
+
+    def test_token_caching_reuses_oauth_response(self) -> None:
+        """OAuth token is cached and reused."""
+
+        caches["default"].clear()
+        engine = SentinelHubEngine(
+            client_id="cid", client_secret=secrets.token_urlsafe(8)
+        )
+
+        call_count = 0
+
+        class FakeResponse:
+            def json(self) -> dict[str, object]:
+                return {"access_token": "token-123", "expires_in": 3600}
+
+            def raise_for_status(self) -> None:
+                return None
+
+        def fake_request(*_: Any, **__: Any) -> FakeResponse:
+            nonlocal call_count
+            call_count += 1
+            return FakeResponse()
+
+        with patch.object(
+            engine, "_request_with_retry", side_effect=fake_request
+        ):
+            token1 = engine._get_access_token()
+            token2 = engine._get_access_token()
+
+        self.assertEqual(token1, "token-123")
+        self.assertEqual(token1, token2)
+        self.assertEqual(call_count, 1)
+
+    @patch("ndvi.views.enqueue_job")
+    def test_cached_response_skips_enqueue(
+        self, mock_enqueue: MagicMock
+    ) -> None:
+        """Cached API response is returned without scheduling."""
+
+        self.client.force_authenticate(user=self.user)
+        payload = {
+            "start": "2024-03-01",
+            "end": "2024-03-03",
+            "step_days": "1",
+        }
+
+        with patch("ndvi.views.run_ndvi_job.delay"):
+            first = self.client.get(
+                self.timeseries_url, payload, format="json"
+            )
+            self.assertEqual(first.status_code, status.HTTP_200_OK)
+
+        mock_enqueue.reset_mock()
+        second = self.client.get(self.timeseries_url, payload, format="json")
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        mock_enqueue.assert_not_called()

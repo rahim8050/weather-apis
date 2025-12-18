@@ -1,0 +1,27 @@
+# Daily Report — 2025-12-17 (EAT)
+
+## Done
+- Verified Prometheus container is up and reachable on :9090.
+- Tested Prometheus scraping by curling /metrics from inside the container (host.docker.internal:8000/metrics) and confirmed real metric output.
+- Worked through Prometheus “target/down” troubleshooting loop (narrowing networking vs config vs endpoint availability).
+- Reviewed API key auth behavior + tests (happy path + expired/revoked denial) and discussed rate-limit design (anon/user/scoped + per-API-key throttles).
+- Updated/iterated CV items (small org version, kept Zynamis with corrected end date, fixed missing items like Stylelint mention).
+
+## In progress
+- Getting Prometheus/Grafana targets clean (eliminating remaining errors you screenshotted).
+- Planning NDVI endpoint enforcement + permissions model (queued for next session).
+
+## Next
+- Make Prometheus target go GREEN (one clear fix + verify in Targets UI).
+- Add one small “runbook” note: what to check when scrape is DOWN.
+- Draft NDVI endpoint skeleton + permission rules (even before full implementation).
+
+## Blockers / Risks
+- Fatigue / context switching reducing focus.
+- Some error details still only in screenshots (harder to reason about without exact text).
+
+## Links
+- PR(s): —
+- Commit(s): — https://github.com/rahim8050/weather-apis
+- Issue(s): —
+
