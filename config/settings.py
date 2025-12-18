@@ -344,6 +344,27 @@ NDVI_REQUEST_TIMEOUT_SECONDS = env.float(
     "NDVI_REQUEST_TIMEOUT_SECONDS",
     default=20,
 )
+NDVI_RASTER_ENGINE_PATH = env(
+    "NDVI_RASTER_ENGINE_PATH",
+    default="ndvi.raster.sentinelhub_engine.SentinelHubRasterEngine",
+)
+NDVI_RASTER_ENGINE_NAME = env(
+    "NDVI_RASTER_ENGINE_NAME",
+    default="sentinelhub",
+)
+NDVI_RASTER_MAX_SIZE = env.int("NDVI_RASTER_MAX_SIZE", default=1024)
+NDVI_RASTER_DEFAULT_SIZE = env.int(
+    "NDVI_RASTER_DEFAULT_SIZE",
+    default=512,
+)
+NDVI_RASTER_MANUAL_QUEUE_COOLDOWN_SECONDS = env.int(
+    "NDVI_RASTER_MANUAL_QUEUE_COOLDOWN_SECONDS",
+    default=900,
+)
+NDVI_RASTER_CACHE_TTL_SECONDS = env.int(
+    "NDVI_RASTER_CACHE_TTL_SECONDS",
+    default=86400,
+)
 
 # Celery
 CELERY_BROKER_URL = env("CELERY_BROKER_URL", default=REDIS_URL or "memory://")

@@ -5,6 +5,8 @@ from datetime import date, timedelta
 from typing import Any
 
 from celery import shared_task
+from django.conf import settings
+from django.core.files.base import ContentFile
 from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
@@ -12,7 +14,8 @@ from rest_framework.exceptions import ValidationError
 from farms.models import Farm
 
 from .metrics import ndvi_jobs_total
-from .models import NdviJob
+from .models import NdviJob, NdviRasterArtifact
+from .raster.service import render_ndvi_png
 from .services import (
     DEFAULT_ENGINE,
     DEFAULT_LOOKBACK_DAYS,
@@ -49,8 +52,8 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
                 + timedelta(seconds=LOCK_TIMEOUT_SECONDS)
             )
 
-        engine = get_engine(job.engine)
         if job.job_type == NdviJob.JobType.REFRESH_LATEST:
+            engine = get_engine(job.engine)
             latest_params = normalize_latest_params(
                 lookback_days=job.lookback_days or DEFAULT_LOOKBACK_DAYS,
                 max_cloud=job.max_cloud or DEFAULT_MAX_CLOUD,
@@ -64,7 +67,50 @@ def run_ndvi_job(self: Any, job_id: int) -> str:
                 upsert_observations(
                     farm=job.farm, engine=job.engine, points=[point]
                 )
+        elif job.job_type == NdviJob.JobType.RASTER_PNG:
+            raster_date = job.start or job.end or date.today()
+            default_size = int(
+                getattr(settings, "NDVI_RASTER_DEFAULT_SIZE", 512)
+            )
+            raster_size = job.step_days or default_size
+            size_max = int(getattr(settings, "NDVI_RASTER_MAX_SIZE", 1024))
+            if raster_size < 128 or raster_size > size_max:
+                raise ValidationError(
+                    f"Raster size must be between 128 and {size_max}."
+                )
+            if raster_size * raster_size > 1024 * 1024:
+                raise ValidationError("Raster size exceeds pixel limit.")
+            max_cloud = job.max_cloud or DEFAULT_MAX_CLOUD
+            content, content_hash = render_ndvi_png(
+                farm=job.farm,
+                bbox=bbox,
+                day=raster_date,
+                size=raster_size,
+                max_cloud=max_cloud,
+                engine_name=job.engine,
+            )
+            filename = (
+                f"ndvi_raster_{job.farm_id}_{raster_date}_{raster_size}_"
+                f"{max_cloud}_{content_hash[:8]}.png"
+            )
+            artifact, _ = NdviRasterArtifact.objects.update_or_create(
+                farm=job.farm,
+                engine=job.engine,
+                date=raster_date,
+                size=raster_size,
+                max_cloud=max_cloud,
+                defaults={
+                    "owner_id": job.owner_id,
+                    "content_hash": content_hash,
+                },
+            )
+            artifact.content_hash = content_hash
+            artifact.owner_id = job.owner_id
+            artifact.last_error = None
+            artifact.image.save(filename, ContentFile(content), save=False)
+            artifact.save()
         else:
+            engine = get_engine(job.engine)
             timeseries_params = normalize_timeseries_params(
                 start=job.start
                 or date.today() - timedelta(days=DEFAULT_STEP_DAYS),

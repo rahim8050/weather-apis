@@ -15,7 +15,9 @@ class NdviObservation(models.Model):
     farm = models.ForeignKey(
         Farm, on_delete=models.CASCADE, related_name="ndvi_observations"
     )
-    engine = models.CharField(max_length=64)
+    engine = models.CharField(
+        max_length=64, default=settings.NDVI_RASTER_ENGINE_NAME
+    )
     bucket_date = models.DateField()
     mean = models.FloatField()
     min = models.FloatField(null=True, blank=True)
@@ -50,6 +52,7 @@ class NdviJob(models.Model):
         REFRESH_LATEST = "refresh_latest", "Refresh latest"
         GAP_FILL = "gap_fill", "Gap fill"
         BACKFILL = "backfill", "Backfill"
+        RASTER_PNG = "raster_png", "Raster PNG"
 
     class JobStatus(models.TextChoices):
         QUEUED = "queued", "Queued"
@@ -122,3 +125,40 @@ class NdviJob(models.Model):
         self.last_error = error
         fields = ["status", "finished_at", "last_error"]
         self.save(update_fields=fields)
+
+
+class NdviRasterArtifact(models.Model):
+    """Persisted NDVI raster PNG artifact for a farm and date."""
+
+    farm = models.ForeignKey(
+        Farm,
+        on_delete=models.CASCADE,
+        related_name="ndvi_rasters",
+    )
+    owner_id = models.IntegerField(db_index=True)
+    engine = models.CharField(max_length=64)
+    date = models.DateField()
+    size = models.PositiveSmallIntegerField()
+    max_cloud = models.PositiveSmallIntegerField()
+    content_hash = models.CharField(max_length=64, db_index=True)
+    image = models.FileField(upload_to="ndvi/rasters/%Y/%m/%d/")
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_error = models.TextField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["farm", "engine", "date", "size", "max_cloud"],
+                name="uniq_ndvi_raster_farm_engine_date_size_cloud",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["owner_id", "date"]),
+            models.Index(fields=["engine", "date"]),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"Raster {self.date} farm={self.farm_id} engine={self.engine} "
+            f"size={self.size}"
+        )

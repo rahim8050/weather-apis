@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, cast
 
+from django.conf import settings
 from rest_framework import serializers
 
 from .models import NdviJob, NdviObservation
@@ -61,6 +62,36 @@ class LatestRequestSerializer(serializers.Serializer):
         return {
             "lookback_days": params.lookback_days,
             "max_cloud": params.max_cloud,
+        }
+
+
+class RasterPngRequestSerializer(serializers.Serializer):
+    date = serializers.DateField()
+    size = serializers.IntegerField(required=False)
+    max_cloud = serializers.IntegerField(
+        required=False, min_value=0, max_value=100
+    )
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        size_default = int(getattr(settings, "NDVI_RASTER_DEFAULT_SIZE", 512))
+        size_max = int(getattr(settings, "NDVI_RASTER_MAX_SIZE", 1024))
+        size = cast(int | None, attrs.get("size")) or size_default
+        if size < 128 or size > size_max:
+            raise serializers.ValidationError(
+                f"size must be between 128 and {size_max}"
+            )
+        if size * size > 1024 * 1024:
+            raise serializers.ValidationError(
+                "size too large: max 1,048,576 pixels"
+            )
+        max_cloud = cast(int | None, attrs.get("max_cloud"))
+        if max_cloud is None:
+            max_cloud = int(getattr(settings, "NDVI_DEFAULT_MAX_CLOUD", 30))
+
+        return {
+            "date": cast(date, attrs["date"]),
+            "size": size,
+            "max_cloud": max_cloud,
         }
 
 

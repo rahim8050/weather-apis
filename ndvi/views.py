@@ -14,6 +14,7 @@ from typing import Any, cast
 
 from django.conf import settings
 from django.core.cache import caches
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import (
     OpenApiParameter,
@@ -32,15 +33,16 @@ from config.api.openapi import (
     error_envelope_serializer,
     success_envelope_serializer,
 )
-from config.api.responses import success_response
+from config.api.responses import error_response, success_response
 from farms.models import Farm
 
 from .metrics import ndvi_farms_stale_total
-from .models import NdviJob, NdviObservation
+from .models import NdviJob, NdviObservation, NdviRasterArtifact
 from .serializers import (
     LatestRequestSerializer,
     NdviJobSerializer,
     NdviObservationSerializer,
+    RasterPngRequestSerializer,
     TimeseriesRequestSerializer,
 )
 from .services import (
@@ -111,6 +113,14 @@ refresh_success_response = success_envelope_serializer(
     ),
 )
 
+raster_queue_success_response = success_envelope_serializer(
+    "NdviRasterQueueSuccess",
+    data=inline_serializer(
+        name="NdviRasterQueueData",
+        fields={"job_id": serializers.IntegerField()},
+    ),
+)
+
 timeseries_query_params = [
     OpenApiParameter(
         name="start",
@@ -143,6 +153,27 @@ timeseries_query_params = [
 latest_query_params = [
     OpenApiParameter(
         name="lookback_days",
+        type=OpenApiTypes.INT,
+        location=OpenApiParameter.QUERY,
+        required=False,
+    ),
+    OpenApiParameter(
+        name="max_cloud",
+        type=OpenApiTypes.INT,
+        location=OpenApiParameter.QUERY,
+        required=False,
+    ),
+]
+
+raster_query_params = [
+    OpenApiParameter(
+        name="date",
+        type=OpenApiTypes.DATE,
+        location=OpenApiParameter.QUERY,
+        required=True,
+    ),
+    OpenApiParameter(
+        name="size",
         type=OpenApiTypes.INT,
         location=OpenApiParameter.QUERY,
         required=False,
@@ -344,6 +375,150 @@ class NdviLatestView(BaseFarmView):
             payload=payload,
         )
         return success_response(payload, message="Latest NDVI")
+
+
+class NdviRasterPngView(BaseFarmView):
+    """Serve NDVI raster PNG for a farm (owner-only)."""
+
+    @extend_schema(
+        parameters=raster_query_params,
+        responses={
+            200: OpenApiTypes.BINARY,
+            304: OpenApiTypes.NONE,
+            404: ndvi_error_response,
+        },
+    )
+    def get(self, request: Request, farm_id: int) -> HttpResponse | Response:
+        """Return a cached NDVI raster PNG or 404 if missing.
+
+        Query params: date (required), optional size and max_cloud.
+        Success: binary image/png with ETag + Cache-Control.
+        Errors: standard error envelope.
+        """
+
+        farm = self._get_farm(farm_id, cast(int, request.user.id))
+        serializer = RasterPngRequestSerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+        params = serializer.validated_data
+
+        bbox = normalize_bbox(farm)
+        enforce_quota(farm, bbox)
+
+        engine_name = getattr(
+            settings, "NDVI_RASTER_ENGINE_NAME", DEFAULT_ENGINE
+        )
+        cache_key = (
+            f"ndvi:raster:ptr:{farm.id}:{engine_name}:"
+            f"{params['date']}:{params['size']}:{params['max_cloud']}"
+        )
+        cache = caches["default"]
+        artifact_id = cache.get(cache_key)
+        artifact: NdviRasterArtifact | None = None
+        if artifact_id:
+            artifact = NdviRasterArtifact.objects.filter(
+                id=cast(int, artifact_id)
+            ).first()
+        if artifact is None:
+            artifact = NdviRasterArtifact.objects.filter(
+                farm=farm,
+                engine=engine_name,
+                date=params["date"],
+                size=params["size"],
+                max_cloud=params["max_cloud"],
+            ).first()
+            if artifact:
+                cache.set(
+                    cache_key,
+                    artifact.id,
+                    getattr(settings, "NDVI_RASTER_CACHE_TTL_SECONDS", 86400),
+                )
+        if artifact is None:
+            return error_response(
+                "Raster not found",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        etag = artifact.content_hash
+        client_etag = request.headers.get("If-None-Match")
+        if client_etag and client_etag.strip('"') == etag:
+            not_modified = HttpResponse(status=status.HTTP_304_NOT_MODIFIED)
+            not_modified["ETag"] = etag
+            return not_modified
+
+        artifact.image.open("rb")
+        content = artifact.image.read()
+        artifact.image.close()
+        if not content:
+            return error_response(
+                "Raster not found",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+        response = HttpResponse(content, content_type="image/png")
+        response["ETag"] = etag
+        ttl = int(getattr(settings, "NDVI_RASTER_CACHE_TTL_SECONDS", 86400))
+        response["Cache-Control"] = f"public, max-age={ttl}"
+        return response
+
+
+class NdviRasterQueueView(BaseFarmView):
+    """Queue NDVI raster rendering with cooldown."""
+
+    throttle_cooldown = int(
+        getattr(
+            settings,
+            "NDVI_RASTER_MANUAL_QUEUE_COOLDOWN_SECONDS",
+            900,
+        )
+    )
+
+    @extend_schema(
+        request=RasterPngRequestSerializer,
+        responses={
+            202: raster_queue_success_response,
+            400: ndvi_error_response,
+            404: ndvi_error_response,
+            429: ndvi_error_response,
+        },
+    )
+    def post(self, request: Request, farm_id: int) -> Response:
+        """Enqueue a raster render job for the specified date."""
+
+        farm = self._get_farm(farm_id, cast(int, request.user.id))
+        serializer = RasterPngRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        params = serializer.validated_data
+
+        bbox = normalize_bbox(farm)
+        enforce_quota(farm, bbox)
+
+        throttle_cache = caches["default"]
+        key = f"ndvi:raster:queue:{request.user.id}:{farm.id}"
+        if throttle_cache.get(key):
+            raise Throttled(detail="Raster already queued recently.")
+        throttle_cache.set(key, "1", self.throttle_cooldown)
+
+        engine_name = getattr(
+            settings, "NDVI_RASTER_ENGINE_NAME", DEFAULT_ENGINE
+        )
+        job = enqueue_job(
+            owner_id=cast(int, request.user.id),
+            farm=farm,
+            engine=engine_name,
+            job_type=NdviJob.JobType.RASTER_PNG,
+            params={
+                "start": params["date"],
+                "end": params["date"],
+                "step_days": params["size"],
+                "max_cloud": params["max_cloud"],
+            },
+        )
+        run_ndvi_job.delay(job.id)
+
+        return success_response(
+            {"job_id": job.id},
+            message="Raster render queued",
+            status_code=status.HTTP_202_ACCEPTED,
+        )
 
 
 class NdviRefreshView(BaseFarmView):

@@ -5,6 +5,8 @@ from django.urls import path
 from .views import (
     NdviJobStatusView,
     NdviLatestView,
+    NdviRasterPngView,
+    NdviRasterQueueView,
     NdviRefreshView,
     NdviTimeseriesView,
 )
@@ -24,6 +26,16 @@ urlpatterns = [
         "farms/<int:farm_id>/ndvi/refresh/",
         NdviRefreshView.as_view(),
         name="ndvi-refresh",
+    ),
+    path(
+        "farms/<int:farm_id>/ndvi/raster.png",
+        NdviRasterPngView.as_view(),
+        name="ndvi-raster",
+    ),
+    path(
+        "farms/<int:farm_id>/ndvi/raster/queue",
+        NdviRasterQueueView.as_view(),
+        name="ndvi-raster-queue",
     ),
     path(
         "ndvi/jobs/<int:job_id>/",
