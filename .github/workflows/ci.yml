@@ -92,9 +92,6 @@ jobs:
       - name: Ruff (format check)
         run: python -m ruff format --check .
 
-      - name: Black (format check)
-        run: python -m black --check .
-
       - name: MyPy (types)
         run: python -m mypy .
 
