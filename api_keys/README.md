@@ -1,147 +1,159 @@
-# API Keys
+# API keys app
 
-This app implements first-party API keys for authenticating requests via the
-`X-API-Key` header and associates each key with a user account.
+Back to root: `../README.md`
 
-## What exists today
+## Overview
 
-- API key model: `api_keys.models.ApiKey`
-- API key authentication: `api_keys.auth.ApiKeyAuthentication`
-- Key lifecycle endpoints (JWT-only): `api_keys.views.ApiKeyView`,
-  `api_keys.views.ApiKeyRevokeView`, `api_keys.views.ApiKeyRotateView`
-- Per-key throttling: `api_keys.throttling.ApiKeyRateThrottle`
-- Generic scope enforcement (not globally applied yet):
-  `api_keys.permissions.ApiKeyScopePermission`
+This app implements first-party API keys that authenticate requests via the
+`X-API-Key` header and associate each key with a Django user.
 
-## Scopes (least privilege)
+It also provides JWT-only endpoints to create/list/revoke/rotate API keys under
+`/api/v1/keys/`. API-key callers cannot manage API keys (from code:
+`api_keys/views.py` uses `JWTAuthentication` only).
 
-Scopes live on the `ApiKey.scope` field with these values:
+## Key concepts / data model
 
-- `read` (default): safe/read-only endpoints
-- `write`: endpoints that mutate state (POST/PUT/PATCH/DELETE)
-- `admin`: reserved for privileged operations (optional future use)
+Models (from code: `api_keys/models.py`):
+- `ApiKey`: stores a user-owned key as a peppered hash plus metadata.
+- `ApiKeyScope`: `read`, `write`, `admin` (stored in `ApiKey.scope`).
 
-### Scope rules (generic)
+Storage and security properties:
+- Plaintext API keys are generated with prefix `wk_live_…` and stored only as a
+  hash in `ApiKey.key_hash` (from code: `api_keys/auth.py` and
+  `api_keys/serializers.py`).
+- Plaintext is returned once at creation/rotation time via serializer fields
+  only; it is not persisted (from code: `api_keys/serializers.py`,
+  `api_keys/views.py`).
 
-`ApiKeyScopePermission` enforces the following:
+## API surface
 
-- If `request.auth` is **not** an `ApiKey` (e.g., JWT auth), it allows the
-  request unchanged.
-- If `request.auth` **is** an `ApiKey`:
-  - SAFE methods (`GET`, `HEAD`, `OPTIONS`) require `read` or `write` (or
-    `admin`).
-  - Unsafe methods require `write` (or `admin`).
+Base path: `/api/v1/keys/` (from code: `config/urls.py` and `api_keys/urls.py`).
 
-This permission is intentionally generic so other apps (e.g. NDVI) can opt in
-per-endpoint without changing global behavior.
+All successful responses use the project envelope produced by
+`config.api.responses.success_response`:
 
-## How to wire scopes into other apps (future NDVI wiring)
-
-When you add an endpoint that should allow API keys, do **both** of the
-following:
-
-1. Ensure API key authentication can run (either by using default auth classes
-   or explicitly adding it).
-2. Add `ApiKeyScopePermission` to restrict API-key requests to the appropriate
-   scope.
-
-### Example: APIView (read-only)
-
-```python
-from rest_framework.permissions import AllowAny
-from rest_framework.views import APIView
-
-from api_keys.permissions import ApiKeyScopePermission
-
-
-class NdviReadView(APIView):
-    permission_classes = (AllowAny, ApiKeyScopePermission)
-
-    def get(self, request, *args, **kwargs):
-        ...
+```json
+{ "status": 0, "message": "string", "data": {}, "errors": null }
 ```
 
-### Example: APIView (write endpoint)
+| Method | Path | Auth | Purpose | Key params |
+| --- | --- | --- | --- | --- |
+| GET | `/api/v1/keys/` | JWT | List API keys (metadata only) | none |
+| POST | `/api/v1/keys/` | JWT | Create API key (returns plaintext once) | body: `name`, optional `scope`, optional `expires_at` |
+| DELETE | `/api/v1/keys/<uuid>/` | JWT | Revoke API key | path: `uuid` |
+| POST | `/api/v1/keys/<uuid>/rotate/` | JWT | Rotate API key (returns plaintext once) | path: `uuid`; body: optional overrides |
 
-```python
-from rest_framework.permissions import AllowAny
-from rest_framework.views import APIView
+### Examples
 
-from api_keys.permissions import ApiKeyScopePermission
+#### List keys
 
-
-class NdviWriteView(APIView):
-    permission_classes = (AllowAny, ApiKeyScopePermission)
-
-    def post(self, request, *args, **kwargs):
-        ...
+```bash
+curl -sS http://localhost:8000/api/v1/keys/ \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
 ```
 
-Notes:
-- `ApiKeyScopePermission` only *restricts* API key callers. JWT callers are not
-  affected.
-- If an endpoint should be JWT-only, keep it JWT-only (do not add API key
-  authentication).
+Response:
 
-### Suggested tests when wiring NDVI
+```json
+{ "status": 0, "message": "API keys", "data": [{ "id": "..." }], "errors": null }
+```
 
-Add tests mirroring `tests/test_api_keys.py` patterns:
+#### Create key
 
-- `test_ndvi_read_allows_read_scope_key`
-- `test_ndvi_write_requires_write_scope_key`
-- `test_ndvi_jwt_bypasses_scope_permission`
+```bash
+curl -sS -X POST http://localhost:8000/api/v1/keys/ \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"My Key","scope":"read","expires_at":null}'
+```
 
-## Key creation & rotation payloads
-
-Key lifecycle endpoints are JWT-only by design.
-
-- Create: `POST /api/v1/keys/`
-  - accepts `name`, optional `expires_at`, optional `scope`
-  - returns plaintext `api_key` only once
-- Rotate: `POST /api/v1/keys/<uuid>/rotate/`
-  - accepts optional `name`, optional `expires_at`, optional `scope`
-  - revokes old key immediately, returns new plaintext once
-- List: `GET /api/v1/keys/`
-  - returns metadata only (never returns plaintext or `key_hash`)
-
-## `last_used_at` tracking (low-write)
-
-`ApiKey.last_used_at` is updated only on successful API key authentication,
-and at most once per 5 minutes per key.
-
-This is implemented in `ApiKeyAuthentication.authenticate` using a
-`QuerySet.update()` filter that only writes when:
-
-- `last_used_at` is `NULL`, or
-- `last_used_at` is older than the write interval
-
-This avoids a database write on every request in production.
-
-## Audit logging (no plaintext leakage)
-
-Audit events are emitted via the `api_keys` logger. Events include:
-
-- `api_key.created` / `api_key.revoked` / `api_key.rotated`
-- `api_key.auth.success` / `api_key.auth.failure` / `api_key.auth.missing`
-
-Logs include: user_id, key_id (when available), request path/method,
-status code, client IP (best-effort), and user-agent (best-effort).
-
-Plaintext API keys must never be logged.
-
-## Throttling envelope (429)
-
-When DRF raises `Throttled`, the global exception handler wraps the response in
-the project’s standard envelope:
+Response (plaintext returned once):
 
 ```json
 {
-  "status": 1,
-  "message": "Too Many Requests",
-  "data": null,
-  "errors": { "detail": "...", "wait": 12 }
+  "status": 0,
+  "message": "API key created",
+  "data": { "id": "...", "api_key": "wk_live_..." },
+  "errors": null
 }
 ```
 
-This keeps rate-limit errors consistent with other API error responses.
+#### Revoke key
+
+```bash
+curl -sS -X DELETE http://localhost:8000/api/v1/keys/$KEY_ID/ \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
+```
+
+Response:
+
+```json
+{ "status": 0, "message": "API key revoked", "data": null, "errors": null }
+```
+
+#### Rotate key
+
+```bash
+curl -sS -X POST http://localhost:8000/api/v1/keys/$KEY_ID/rotate/ \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Rotated Key","scope":"write"}'
+```
+
+Response (plaintext returned once):
+
+```json
+{ "status": 0, "message": "API key rotated", "data": { "api_key": "wk_live_..." }, "errors": null }
+```
+
+## Business logic
+
+- Key generation: `generate_plaintext_key()` uses `secrets.token_urlsafe` and a
+  fixed prefix (from code: `api_keys/auth.py`).
+- Peppering + hashing:
+  - Pepper comes from `DJANGO_API_KEY_PEPPER`
+  - Hash stored via Django password hasher (`make_password`)
+  - Verification via `check_password` (from code: `api_keys/auth.py`)
+- `last_used_at` tracking:
+  - On successful API-key authentication, `ApiKey.last_used_at` is updated at
+    most once per 5 minutes per key to reduce write load (from code:
+    `api_keys/auth.py`).
+- Throttling:
+  - `ApiKeyRateThrottle` uses the `throttle` cache and keys by `ApiKey.id`
+    (from code: `api_keys/throttling.py`).
+
+Optional utilities:
+- `ApiKeyScopePermission` can restrict unsafe methods when the caller is an API
+  key (JWT callers pass through unchanged; from code: `api_keys/permissions.py`).
+
+## AuthZ / permissions
+
+- Key lifecycle endpoints: JWT only (`JWTAuthentication`; from code:
+  `api_keys/views.py`).
+- API key authentication for other endpoints:
+  - Authentication class: `api_keys.auth.ApiKeyAuthentication` (exported as
+    `api_keys.authentication.ApiKeyAuthentication`; from code:
+    `api_keys/auth.py`, `api_keys/authentication.py`)
+  - Header: `X-API-Key`
+
+## Settings / env vars
+
+From code: `config/settings.py` and `api_keys/auth.py`:
+
+- `DJANGO_API_KEY_PEPPER` (required for staging/production; used to pepper API keys)
+- `API_KEY_THROTTLE_RATE` (DRF throttle rate for `api_key` scope)
+
+## Background jobs
+
+None.
+
+## Metrics / monitoring
+
+No custom Prometheus metrics are emitted directly by this app, but API-key
+auth is logged (from code: `api_keys/auth.py`).
+
+## Testing
+
+- Tests live in `tests/test_api_keys.py`.
+- Run: `pytest tests/test_api_keys.py`
 
