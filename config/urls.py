@@ -53,4 +53,5 @@ urlpatterns = [
     path("api/v1/keys/", include("api_keys.urls")),
     path("api/v1/", include("farms.urls")),
     path("api/v1/", include("ndvi.urls")),
+    path("api/v1/", include("weather.urls")),
 ]

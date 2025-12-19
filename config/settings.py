@@ -79,6 +79,7 @@ INSTALLED_APPS = [
     "api_keys",
     "farms",
     "ndvi",
+    "weather",
 ]
 
 MIDDLEWARE = [
@@ -221,7 +222,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = "en-us"
 
-TIME_ZONE = "UTC"
+TIME_ZONE = "Africa/Nairobi"
 
 USE_I18N = True
 
@@ -366,6 +367,40 @@ NDVI_RASTER_CACHE_TTL_SECONDS = env.int(
     default=86400,
 )
 
+# Weather defaults
+WEATHER_PROVIDER_DEFAULT = env(
+    "WEATHER_PROVIDER_DEFAULT",
+    default="open_meteo",
+)
+WEATHER_DEFAULT_TZ = env(
+    "WEATHER_DEFAULT_TZ",
+    default="Africa/Nairobi",
+)
+OPEN_METEO_BASE_URL = env(
+    "OPEN_METEO_BASE_URL",
+    default="https://api.open-meteo.com/v1/forecast",
+)
+NASA_POWER_BASE_URL = env(
+    "NASA_POWER_BASE_URL",
+    default="https://power.larc.nasa.gov/api/temporal/daily/point",
+)
+WEATHER_CACHE_TTL_CURRENT_S = env.int(
+    "WEATHER_CACHE_TTL_CURRENT_S",
+    default=120,
+)
+WEATHER_CACHE_TTL_DAILY_S = env.int(
+    "WEATHER_CACHE_TTL_DAILY_S",
+    default=900,
+)
+WEATHER_CACHE_TTL_WEEKLY_S = env.int(
+    "WEATHER_CACHE_TTL_WEEKLY_S",
+    default=1800,
+)
+WEATHER_MAX_RANGE_DAYS = env.int(
+    "WEATHER_MAX_RANGE_DAYS",
+    default=366,
+)
+
 # Celery
 CELERY_BROKER_URL = env("CELERY_BROKER_URL", default=REDIS_URL or "memory://")
 CELERY_RESULT_BACKEND = env(
@@ -391,4 +426,4 @@ CELERY_BEAT_SCHEDULE = {
     },
 }
 CELERY_ENABLE_UTC = True
-CELERY_TIMEZONE = "UTC"
+CELERY_TIMEZONE = "Africa/Nairobi"

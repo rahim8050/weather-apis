@@ -1,0 +1,321 @@
+from __future__ import annotations
+
+import time
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import date, timedelta
+from typing import TypedDict
+
+from django.conf import settings
+from django.core.cache import caches
+from rest_framework.exceptions import ValidationError
+
+from .engines.registry import build_registry, validate_provider
+from .engines.types import (
+    CurrentWeather,
+    DailyForecast,
+    Location,
+    ProviderName,
+    WeeklyReport,
+)
+from .metrics import (
+    weather_cache_hits_total,
+    weather_cache_misses_total,
+    weather_provider_errors_total,
+    weather_provider_latency_seconds,
+    weather_provider_requests_total,
+)
+from .timeutils import get_zone
+
+DEFAULT_TZ = getattr(settings, "WEATHER_DEFAULT_TZ", "Africa/Nairobi")
+CACHE_TTL_CURRENT = int(getattr(settings, "WEATHER_CACHE_TTL_CURRENT_S", 120))
+CACHE_TTL_DAILY = int(getattr(settings, "WEATHER_CACHE_TTL_DAILY_S", 900))
+CACHE_TTL_WEEKLY = int(getattr(settings, "WEATHER_CACHE_TTL_WEEKLY_S", 1800))
+MAX_RANGE_DAYS = int(getattr(settings, "WEATHER_MAX_RANGE_DAYS", 366))
+
+PROVIDER_REGISTRY = build_registry()
+
+
+@dataclass(frozen=True)
+class CacheKey:
+    endpoint: str
+    provider: ProviderName
+    lat: float
+    lon: float
+    tz: str
+    start: date | None = None
+    end: date | None = None
+
+    def as_string(self) -> str:
+        rounded_lat = f"{self.lat:.4f}"
+        rounded_lon = f"{self.lon:.4f}"
+        start_part = self.start.isoformat() if self.start else "-"
+        end_part = self.end.isoformat() if self.end else "-"
+        return (
+            f"weather:{self.endpoint}:{self.provider}:"
+            f"{rounded_lat}:{rounded_lon}:{self.tz}:"
+            f"{start_part}:{end_part}"
+        )
+
+
+def _select_provider(name: str | None) -> ProviderName:
+    try:
+        return validate_provider(name, PROVIDER_REGISTRY)
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
+
+
+async def get_current_weather(
+    lat: float,
+    lon: float,
+    tz: str = DEFAULT_TZ,
+    provider: str | None = None,
+) -> CurrentWeather:
+    get_zone(tz)
+    provider_name = _select_provider(provider)
+    key = CacheKey(
+        endpoint="current",
+        provider=provider_name,
+        lat=lat,
+        lon=lon,
+        tz=tz,
+    )
+    cache = caches["default"]
+    cached = cache.get(key.as_string())
+    if cached:
+        weather_cache_hits_total.labels(
+            provider=provider_name, endpoint="current"
+        ).inc()
+        return cached
+
+    weather_cache_misses_total.labels(
+        provider=provider_name, endpoint="current"
+    ).inc()
+    provider_impl = PROVIDER_REGISTRY[provider_name]
+    location = Location(lat=lat, lon=lon, tz=tz)
+
+    start_time = time.perf_counter()
+    weather_provider_requests_total.labels(
+        provider=provider_name, endpoint="current"
+    ).inc()
+    try:
+        result = await provider_impl.current(location)
+    except Exception as exc:
+        weather_provider_errors_total.labels(
+            provider=provider_name,
+            endpoint="current",
+            error_type=exc.__class__.__name__,
+        ).inc()
+        raise
+    finally:
+        duration = time.perf_counter() - start_time
+        weather_provider_latency_seconds.labels(
+            provider=provider_name, endpoint="current"
+        ).observe(duration)
+
+    cache.set(key.as_string(), result, CACHE_TTL_CURRENT)
+    return result
+
+
+async def get_daily_forecast(
+    lat: float,
+    lon: float,
+    start: date,
+    end: date,
+    tz: str = DEFAULT_TZ,
+    provider: str | None = None,
+) -> Sequence[DailyForecast]:
+    return await _fetch_daily_forecasts(
+        lat=lat,
+        lon=lon,
+        start=start,
+        end=end,
+        tz=tz,
+        provider=provider,
+        endpoint_label="daily",
+    )
+
+
+async def _fetch_daily_forecasts(
+    *,
+    lat: float,
+    lon: float,
+    start: date,
+    end: date,
+    tz: str,
+    provider: str | None,
+    endpoint_label: str,
+) -> Sequence[DailyForecast]:
+    if start > end:
+        raise ValidationError("start must be on or before end.")
+    if (end - start) > timedelta(days=MAX_RANGE_DAYS):
+        raise ValidationError("Requested range exceeds the allowed window.")
+
+    provider_name = _select_provider(provider)
+    get_zone(tz)  # validate tz
+    key = CacheKey(
+        endpoint="daily",
+        provider=provider_name,
+        lat=lat,
+        lon=lon,
+        tz=tz,
+        start=start,
+        end=end,
+    )
+    cache = caches["default"]
+    cache_key = key.as_string()
+    cached = cache.get(cache_key)
+    if cached:
+        weather_cache_hits_total.labels(
+            provider=provider_name, endpoint=endpoint_label
+        ).inc()
+        return cached
+
+    weather_cache_misses_total.labels(
+        provider=provider_name, endpoint=endpoint_label
+    ).inc()
+    provider_impl = PROVIDER_REGISTRY[provider_name]
+    location = Location(lat=lat, lon=lon, tz=tz)
+
+    start_time = time.perf_counter()
+    weather_provider_requests_total.labels(
+        provider=provider_name, endpoint=endpoint_label
+    ).inc()
+    try:
+        result = await provider_impl.daily(location, start, end)
+    except Exception as exc:
+        weather_provider_errors_total.labels(
+            provider=provider_name,
+            endpoint=endpoint_label,
+            error_type=exc.__class__.__name__,
+        ).inc()
+        raise
+    finally:
+        duration = time.perf_counter() - start_time
+        weather_provider_latency_seconds.labels(
+            provider=provider_name, endpoint=endpoint_label
+        ).observe(duration)
+
+    cache.set(cache_key, result, CACHE_TTL_DAILY)
+    return result
+
+
+async def get_weekly_report(
+    lat: float,
+    lon: float,
+    start: date,
+    end: date,
+    tz: str = DEFAULT_TZ,
+    provider: str | None = None,
+) -> Sequence[WeeklyReport]:
+    provider_name = _select_provider(provider)
+    get_zone(tz)
+    key = CacheKey(
+        endpoint="weekly",
+        provider=provider_name,
+        lat=lat,
+        lon=lon,
+        tz=tz,
+        start=start,
+        end=end,
+    )
+    cache = caches["default"]
+    cache_key = key.as_string()
+    cached = cache.get(cache_key)
+    if cached:
+        weather_cache_hits_total.labels(
+            provider=provider_name, endpoint="weekly"
+        ).inc()
+        return cached
+
+    weather_cache_misses_total.labels(
+        provider=provider_name, endpoint="weekly"
+    ).inc()
+    daily_forecasts = await _fetch_daily_forecasts(
+        lat=lat,
+        lon=lon,
+        start=start,
+        end=end,
+        tz=tz,
+        provider=provider_name,
+        endpoint_label="weekly",
+    )
+    weekly = _aggregate_weekly(daily_forecasts, provider_name)
+    cache.set(cache_key, weekly, CACHE_TTL_WEEKLY)
+    return weekly
+
+
+class WeeklyBucket(TypedDict):
+    week_end: date
+    days: list[DailyForecast]
+    tmin_sum: float
+    tmin_count: int
+    tmax_sum: float
+    tmax_count: int
+    precip_sum: float
+    precip_count: int
+
+
+def _aggregate_weekly(
+    forecasts: Sequence[DailyForecast], provider: ProviderName
+) -> list[WeeklyReport]:
+    buckets: dict[date, WeeklyBucket] = {}
+    for forecast in sorted(forecasts, key=lambda f: f.day):
+        week_start = forecast.day - timedelta(days=forecast.day.weekday())
+        week_end = week_start + timedelta(days=6)
+        bucket = buckets.setdefault(
+            week_start,
+            {
+                "week_end": week_end,
+                "days": [],
+                "tmin_sum": 0.0,
+                "tmin_count": 0,
+                "tmax_sum": 0.0,
+                "tmax_count": 0,
+                "precip_sum": 0.0,
+                "precip_count": 0,
+            },
+        )
+        bucket["days"].append(forecast)
+
+        if forecast.t_min_c is not None:
+            bucket["tmin_sum"] = float(bucket["tmin_sum"]) + float(
+                forecast.t_min_c
+            )
+            bucket["tmin_count"] = int(bucket["tmin_count"]) + 1
+        if forecast.t_max_c is not None:
+            bucket["tmax_sum"] = float(bucket["tmax_sum"]) + float(
+                forecast.t_max_c
+            )
+            bucket["tmax_count"] = int(bucket["tmax_count"]) + 1
+        if forecast.precipitation_mm is not None:
+            bucket["precip_sum"] = float(bucket["precip_sum"]) + float(
+                forecast.precipitation_mm
+            )
+            bucket["precip_count"] = int(bucket["precip_count"]) + 1
+
+    reports: list[WeeklyReport] = []
+    for week_start, bucket in sorted(buckets.items()):
+        tmin_avg = (
+            bucket["tmin_sum"] / bucket["tmin_count"]
+            if bucket["tmin_count"]
+            else None
+        )
+        tmax_avg = (
+            bucket["tmax_sum"] / bucket["tmax_count"]
+            if bucket["tmax_count"]
+            else None
+        )
+        precip_sum = bucket["precip_sum"] if bucket["precip_count"] else None
+        reports.append(
+            WeeklyReport(
+                week_start=week_start,
+                week_end=bucket["week_end"],
+                t_min_avg_c=tmin_avg,
+                t_max_avg_c=tmax_avg,
+                precipitation_sum_mm=precip_sum,
+                days=bucket["days"],
+                source=provider,
+            )
+        )
+    return reports

@@ -45,3 +45,11 @@
 - `ruff format .`
 - `ruff check .`
 - `bandit -q -r .`
+
+## Weather Subsystem
+
+- Endpoints: `/api/v1/weather/current/`, `/api/v1/weather/daily/`, `/api/v1/weather/weekly/` (JWT or API key).
+- Provider selection: `provider=open_meteo|nasa_power`; defaults to `WEATHER_PROVIDER_DEFAULT` (`open_meteo`).
+- Timezone: defaults to `WEATHER_DEFAULT_TZ` (`Africa/Nairobi`); day/week buckets use the provided timezone.
+- NASA POWER requests are forced to `time-standard=UTC`; Open-Meteo uses the requested timezone directly.
+- Caching: configurable TTLs (`WEATHER_CACHE_TTL_*`); keys include provider, lat/lon, timezone, and date range.
