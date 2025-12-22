@@ -183,6 +183,13 @@ Not all endpoints accept both:
 - Prometheus scrape config: `prometheus.yml`
 - Example monitoring stack: `docker-compose.monitoring.yml`
 
+## Monitoring
+
+Runbook: [docs/monitoring.md](docs/monitoring.md).
+
+- Grafana dashboard: `monitoring/grafana/dashboards/weather-apis-observability.json`
+- Prometheus + Grafana + Loki stack: `docker-compose.monitoring.yml`
+
 ## Testing & quality gates
 
 Repo tooling is configured in `pyproject.toml` and `.pre-commit-config.yaml`.
