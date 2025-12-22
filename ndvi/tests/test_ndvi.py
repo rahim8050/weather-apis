@@ -45,6 +45,7 @@ class NdviApiTests(APITestCase):
         self.timeseries_url = f"/api/v1/farms/{self.farm.id}/ndvi/timeseries/"
         self.latest_url = f"/api/v1/farms/{self.farm.id}/ndvi/latest/"
         self.refresh_url = f"/api/v1/farms/{self.farm.id}/ndvi/refresh/"
+        self.job_status_base = "/api/v1/ndvi/jobs/"
 
     def test_owner_isolation(self) -> None:
         """Users cannot read NDVI for farms they do not own."""
@@ -231,3 +232,131 @@ class NdviApiTests(APITestCase):
         second = self.client.get(self.timeseries_url, payload, format="json")
         self.assertEqual(second.status_code, status.HTTP_200_OK)
         mock_enqueue.assert_not_called()
+
+    @patch("ndvi.views.run_ndvi_job.delay")
+    def test_timeseries_complete_does_not_enqueue(
+        self, mock_delay: MagicMock
+    ) -> None:
+        self.client.force_authenticate(user=self.user)
+        NdviObservation.objects.create(
+            farm=self.farm,
+            engine=DEFAULT_ENGINE,
+            bucket_date=date(2024, 1, 1),
+            mean=0.1,
+        )
+        NdviObservation.objects.create(
+            farm=self.farm,
+            engine=DEFAULT_ENGINE,
+            bucket_date=date(2024, 1, 8),
+            mean=0.2,
+        )
+        NdviObservation.objects.create(
+            farm=self.farm,
+            engine=DEFAULT_ENGINE,
+            bucket_date=date(2024, 1, 15),
+            mean=0.3,
+        )
+        payload = {
+            "start": "2024-01-01",
+            "end": "2024-01-15",
+            "step_days": "7",
+        }
+        resp = self.client.get(self.timeseries_url, payload, format="json")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        data = resp.json()["data"]
+        self.assertFalse(data["is_partial"])
+        self.assertEqual(data["missing_buckets_count"], 0)
+        mock_delay.assert_not_called()
+
+    @patch("ndvi.views.run_ndvi_job.delay")
+    def test_latest_view_stale_enqueues_refresh(
+        self, mock_delay: MagicMock
+    ) -> None:
+        NdviObservation.objects.create(
+            farm=self.farm,
+            engine=DEFAULT_ENGINE,
+            bucket_date=date(2020, 1, 1),
+            mean=0.1,
+        )
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get(self.latest_url, {"lookback_days": "7"})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        data = resp.json()["data"]
+        self.assertTrue(data["stale"])
+        self.assertEqual(
+            NdviJob.objects.filter(
+                job_type=NdviJob.JobType.REFRESH_LATEST
+            ).count(),
+            1,
+        )
+        mock_delay.assert_called_once()
+
+    @patch("ndvi.views.enqueue_job")
+    def test_latest_view_fresh_no_enqueue(
+        self, mock_enqueue: MagicMock
+    ) -> None:
+        NdviObservation.objects.create(
+            farm=self.farm,
+            engine=DEFAULT_ENGINE,
+            bucket_date=date.today(),
+            mean=0.1,
+        )
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get(self.latest_url, {"lookback_days": "7"})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        data = resp.json()["data"]
+        self.assertFalse(data["stale"])
+        mock_enqueue.assert_not_called()
+
+    @patch("ndvi.views.enqueue_job")
+    def test_latest_view_cached_response(
+        self, mock_enqueue: MagicMock
+    ) -> None:
+        self.client.force_authenticate(user=self.user)
+        cached_payload = {
+            "observation": None,
+            "engine": DEFAULT_ENGINE,
+            "lookback_days": 7,
+            "max_cloud": 30,
+            "stale": True,
+        }
+        caches["default"].set(
+            f"ndvi:cache:latest:{self.user.id}:{self.farm.id}:{DEFAULT_ENGINE}:7:30",
+            cached_payload,
+        )
+        resp = self.client.get(self.latest_url, {"lookback_days": "7"})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.json()["data"], cached_payload)
+        mock_enqueue.assert_not_called()
+
+    @patch("ndvi.views.run_ndvi_job.delay")
+    def test_refresh_view_throttle_and_success(
+        self, mock_delay: MagicMock
+    ) -> None:
+        self.client.force_authenticate(user=self.user)
+        first = self.client.post(self.refresh_url, format="json")
+        self.assertEqual(first.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(first.json()["status"], 0)
+        self.assertEqual(
+            NdviJob.objects.filter(
+                job_type=NdviJob.JobType.REFRESH_LATEST
+            ).count(),
+            1,
+        )
+        mock_delay.assert_called_once()
+
+        second = self.client.post(self.refresh_url, format="json")
+        self.assertEqual(second.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+    def test_job_status_view_returns_job(self) -> None:
+        job = NdviJob.objects.create(
+            owner=self.user,
+            farm=self.farm,
+            engine=DEFAULT_ENGINE,
+            job_type=NdviJob.JobType.GAP_FILL,
+            request_hash="status-hash",
+        )
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get(f"{self.job_status_base}{job.id}/")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.json()["data"]["id"], job.id)

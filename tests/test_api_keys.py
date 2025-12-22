@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import secrets
 from datetime import timedelta
 from typing import Any, cast
 from unittest.mock import patch
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.contrib.auth.models import AnonymousUser
 from django.core.cache import caches
+from django.core.exceptions import ImproperlyConfigured
 from django.test.utils import override_settings
 from django.utils import timezone
 from django.utils.module_loading import import_string
@@ -18,11 +22,19 @@ from rest_framework.test import APIRequestFactory, APITestCase
 from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
-from api_keys.auth import validate_api_key
+from api_keys.auth import (
+    _client_ip,
+    _eligible_keys,
+    generate_plaintext_key,
+    hash_api_key,
+    validate_api_key,
+    validate_api_key_with_reason,
+)
 from api_keys.authentication import ApiKeyAuthentication
 from api_keys.models import ApiKey, ApiKeyScope
-from api_keys.permissions import ApiKeyScopePermission
+from api_keys.permissions import ApiKeyScopePermission, HasValidApiKey
 from api_keys.throttling import ApiKeyRateThrottle
+from api_keys.views import _client_ip as view_client_ip
 
 _RF: dict[str, Any] = cast(dict[str, Any], settings.REST_FRAMEWORK)
 _RF_RATES: dict[str, str] = cast(
@@ -253,6 +265,32 @@ class ApiKeyTests(APITestCase):
             old_auth_resp.status_code, status.HTTP_401_UNAUTHORIZED
         )
 
+    def test_revoke_already_revoked_key(self) -> None:
+        access, _ = self._register_and_login("revoke-twice")
+        _, api_key = self._create_api_key(access, name="Revoke Twice")
+
+        first = self.client.delete(f"{self.keys_url}{api_key.id}/")
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+
+        second = self.client.delete(f"{self.keys_url}{api_key.id}/")
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        self.assertEqual(second.json()["status"], 0)
+
+    def test_rotate_from_revoked_key(self) -> None:
+        access, _ = self._register_and_login("rotated-revoked")
+        _, api_key = self._create_api_key(access, name="Revoked Key")
+        api_key.revoked_at = timezone.now()
+        api_key.save(update_fields=["revoked_at"])
+
+        rotate_resp = self.client.post(
+            f"{self.keys_url}{api_key.id}/rotate/",
+            {"name": "Rehydrated"},
+            format="json",
+            HTTP_AUTHORIZATION=f"Bearer {access}",
+        )
+        self.assertEqual(rotate_resp.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(rotate_resp.json()["status"], 0)
+
     def test_api_key_scope_permission_blocks_unsafe_methods(self) -> None:
         access, _ = self._register_and_login("scopeperm")
         plaintext, _ = self._create_api_key(access, scope=ApiKeyScope.READ)
@@ -283,6 +321,49 @@ class ApiKeyTests(APITestCase):
         drf_request = Request(factory.post("/t"))
         drf_request.auth = "jwt"
         self.assertTrue(permission.has_permission(drf_request, object()))
+
+    def test_api_key_scope_permission_admin_allows_write(self) -> None:
+        user = get_user_model().objects.create_user(
+            username="scope-admin",
+            email="scope-admin@example.com",
+            password=secrets.token_urlsafe(12),
+        )
+        api_key = ApiKey.objects.create(
+            user=user,
+            name="Admin Key",
+            key_hash=hash_api_key(generate_plaintext_key()),
+            prefix="wk_live_admin",
+            last4="9999",
+            scope=ApiKeyScope.ADMIN,
+        )
+        permission = ApiKeyScopePermission()
+        factory = APIRequestFactory()
+        drf_request = Request(factory.post("/t"))
+        drf_request.auth = api_key
+        self.assertTrue(permission.has_permission(drf_request, object()))
+
+    def test_has_valid_api_key_permission(self) -> None:
+        user = get_user_model().objects.create_user(
+            username="perm-user",
+            email="perm-user@example.com",
+            password=secrets.token_urlsafe(12),
+        )
+        plaintext = generate_plaintext_key()
+        ApiKey.objects.create(
+            user=user,
+            name="Perm Key",
+            key_hash=hash_api_key(plaintext),
+            prefix=plaintext[:12],
+            last4=plaintext[-4:],
+            scope=ApiKeyScope.READ,
+        )
+        permission = HasValidApiKey()
+        factory = APIRequestFactory()
+        drf_request = Request(factory.get("/t", HTTP_X_API_KEY=plaintext))
+        self.assertTrue(permission.has_permission(drf_request, object()))
+
+        missing = Request(factory.get("/t"))
+        self.assertFalse(permission.has_permission(missing, object()))
 
     def test_last_used_at_write_is_throttled(self) -> None:
         access, _ = self._register_and_login("lastused")
@@ -480,3 +561,163 @@ class ApiKeyTests(APITestCase):
                 )
             )
             self.assertEqual(resp.status_code, status.HTTP_200_OK)
+
+    def test_validate_api_key_with_reason_variants(self) -> None:
+        user = get_user_model().objects.create_user(
+            username="reason-user",
+            email="reason-user@example.com",
+            password=secrets.token_urlsafe(12),
+        )
+
+        bad_prefix_key = "not_a_key"
+        key, reason = validate_api_key_with_reason(bad_prefix_key)
+        self.assertIsNone(key)
+        self.assertEqual(reason, "invalid")
+
+        no_match = generate_plaintext_key()
+        key, reason = validate_api_key_with_reason(no_match)
+        self.assertIsNone(key)
+        self.assertEqual(reason, "invalid")
+
+        mismatched_plaintext = generate_plaintext_key()
+        ApiKey.objects.create(
+            user=user,
+            name="Mismatch",
+            key_hash=hash_api_key(f"{mismatched_plaintext}x"),
+            prefix=mismatched_plaintext[:12],
+            last4=mismatched_plaintext[-4:],
+            scope=ApiKeyScope.READ,
+        )
+        key, reason = validate_api_key_with_reason(mismatched_plaintext)
+        self.assertIsNone(key)
+        self.assertEqual(reason, "hash_mismatch")
+
+    def test_validate_api_key_with_reason_expired(self) -> None:
+        user = get_user_model().objects.create_user(
+            username="expired-user",
+            email="expired-user@example.com",
+            password=secrets.token_urlsafe(12),
+        )
+        plaintext = generate_plaintext_key()
+        expired_at = timezone.now() - timedelta(minutes=1)
+        api_key = ApiKey.objects.create(
+            user=user,
+            name="Expired",
+            key_hash=hash_api_key(plaintext),
+            prefix=plaintext[:12],
+            last4=plaintext[-4:],
+            expires_at=expired_at,
+            scope=ApiKeyScope.READ,
+        )
+        key, reason = validate_api_key_with_reason(plaintext)
+        self.assertEqual(key, api_key)
+        self.assertEqual(reason, "expired")
+
+    def test_authentication_denies_inactive_user(self) -> None:
+        user = get_user_model().objects.create_user(
+            username="inactive",
+            email="inactive@example.com",
+            password=secrets.token_urlsafe(12),
+            is_active=False,
+        )
+        plaintext = generate_plaintext_key()
+        ApiKey.objects.create(
+            user=user,
+            name="Inactive Key",
+            key_hash=hash_api_key(plaintext),
+            prefix=plaintext[:12],
+            last4=plaintext[-4:],
+            scope=ApiKeyScope.READ,
+        )
+
+        class ProtectedView(APIView):
+            authentication_classes = (ApiKeyAuthentication,)
+            permission_classes = (AllowAny,)
+
+            def get(self, request: Request) -> Response:  # type: ignore[override]
+                return Response({"ok": True})
+
+        factory = APIRequestFactory()
+        resp = ProtectedView.as_view()(
+            factory.get("/p", HTTP_X_API_KEY=plaintext)
+        )
+        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_client_ip_helpers(self) -> None:
+        factory = APIRequestFactory()
+        drf_request = Request(
+            factory.get("/t", HTTP_X_FORWARDED_FOR=" 1.2.3.4, 5.6.7.8")
+        )
+        self.assertEqual(_client_ip(drf_request), "1.2.3.4")
+        self.assertEqual(view_client_ip(drf_request), "1.2.3.4")
+
+    def test_eligible_keys_filters_revoked_and_expired(self) -> None:
+        user = get_user_model().objects.create_user(
+            username="eligible",
+            email="eligible@example.com",
+            password=secrets.token_urlsafe(12),
+        )
+        plaintext = generate_plaintext_key()
+        prefix = plaintext[:12]
+        last4 = plaintext[-4:]
+        ApiKey.objects.create(
+            user=user,
+            name="Active",
+            key_hash=hash_api_key(plaintext),
+            prefix=prefix,
+            last4=last4,
+            scope=ApiKeyScope.READ,
+        )
+        ApiKey.objects.create(
+            user=user,
+            name="Revoked",
+            key_hash=hash_api_key(plaintext),
+            prefix=prefix,
+            last4=last4,
+            revoked_at=timezone.now(),
+            scope=ApiKeyScope.READ,
+        )
+        ApiKey.objects.create(
+            user=user,
+            name="Expired",
+            key_hash=hash_api_key(plaintext),
+            prefix=prefix,
+            last4=last4,
+            expires_at=timezone.now() - timedelta(days=1),
+            scope=ApiKeyScope.READ,
+        )
+        active = list(_eligible_keys(prefix, last4))
+        self.assertEqual(len(active), 1)
+        self.assertEqual(active[0].name, "Active")
+
+    def test_apikey_view_queryset_anonymous_user(self) -> None:
+        view = import_string("api_keys.views.ApiKeyView")()
+        factory = APIRequestFactory()
+        drf_request = Request(factory.get("/keys/"))
+        drf_request.user = AnonymousUser()
+        view.request = drf_request
+        self.assertEqual(list(view.get_queryset()), [])
+
+    @override_settings(
+        REST_FRAMEWORK={
+            **_RF,
+            "DEFAULT_THROTTLE_RATES": {
+                k: v for k, v in _RF_RATES.items() if k != "api_key"
+            },
+        }
+    )
+    def test_throttle_rate_missing_returns_none(self) -> None:
+        api_settings.reload()
+        throttle = ApiKeyRateThrottle()
+        self.assertIsNone(throttle.get_rate())
+
+    @override_settings(
+        REST_FRAMEWORK={
+            **_RF,
+            "DEFAULT_THROTTLE_RATES": {**_RF_RATES, "api_key": 5},
+        }
+    )
+    def test_throttle_rate_invalid_type_raises(self) -> None:
+        api_settings.reload()
+        with self.assertRaises(ImproperlyConfigured):
+            ApiKeyRateThrottle()

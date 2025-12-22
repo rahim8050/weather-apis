@@ -112,6 +112,60 @@ class NdviRasterApiTests(APITestCase):
         )
         self.assertEqual(forbidden.status_code, status.HTTP_404_NOT_FOUND)
 
+    def test_raster_get_missing_returns_404(self) -> None:
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get(
+            self.raster_url,
+            {"date": "2024-02-10", "size": "512", "max_cloud": "30"},
+        )
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(resp.json()["status"], 1)
+
+    def test_raster_get_empty_content_returns_404(self) -> None:
+        artifact = NdviRasterArtifact.objects.create(
+            farm=self.farm,
+            owner_id=self.user.id,
+            engine=getattr(settings, "NDVI_RASTER_ENGINE_NAME", "sentinelhub"),
+            date=date(2024, 2, 3),
+            size=512,
+            max_cloud=30,
+            content_hash="hash-empty",
+        )
+        artifact.image.save("empty.png", ContentFile(b""), save=True)
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get(
+            self.raster_url,
+            {"date": "2024-02-03", "size": "512", "max_cloud": "30"},
+        )
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_raster_lookup_caches_artifact_id(self) -> None:
+        caches["default"].clear()
+        artifact = NdviRasterArtifact.objects.create(
+            farm=self.farm,
+            owner_id=self.user.id,
+            engine=getattr(settings, "NDVI_RASTER_ENGINE_NAME", "sentinelhub"),
+            date=date(2024, 2, 4),
+            size=512,
+            max_cloud=30,
+            content_hash="hash-cache",
+        )
+        artifact.image.save("raster.png", ContentFile(PNG_BYTES), save=True)
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get(
+            self.raster_url,
+            {"date": "2024-02-04", "size": "512", "max_cloud": "30"},
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        engine_name = getattr(
+            settings, "NDVI_RASTER_ENGINE_NAME", "sentinelhub"
+        )
+        cache_key = (
+            f"ndvi:raster:ptr:{self.farm.id}:{engine_name}:2024-02-04:512:30"
+        )
+        cached = caches["default"].get(cache_key)
+        self.assertEqual(cached, artifact.id)
+
     def test_raster_job_execution_saves_artifact(self) -> None:
         self.client.force_authenticate(user=self.user)
         params = {"start": date(2024, 3, 3), "end": date(2024, 3, 3)}

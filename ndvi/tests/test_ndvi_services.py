@@ -1,0 +1,174 @@
+from __future__ import annotations
+
+# ruff: noqa: S101
+import secrets
+from datetime import date, timedelta
+from decimal import Decimal
+
+import pytest
+from django.contrib.auth import get_user_model
+from django.core.cache import caches
+from rest_framework.exceptions import ValidationError
+
+from farms.models import Farm
+from ndvi.engines.base import BBox
+from ndvi.models import NdviJob, NdviObservation
+from ndvi.services import (
+    DEFAULT_ENGINE,
+    MAX_DATERANGE_DAYS,
+    LatestParams,
+    TimeseriesParams,
+    cache_latest_response,
+    enforce_quota,
+    enqueue_job,
+    get_cached_latest_response,
+    get_engine,
+    is_stale,
+    normalize_latest_params,
+    normalize_timeseries_params,
+)
+
+
+@pytest.mark.django_db
+def test_get_engine_invalid_name_raises() -> None:
+    with pytest.raises(ValueError, match="Unsupported NDVI engine"):
+        get_engine("bogus")
+
+
+def test_normalize_timeseries_params_validation() -> None:
+    with pytest.raises(ValidationError):
+        normalize_timeseries_params(
+            start=date(2025, 1, 2),
+            end=date(2025, 1, 1),
+            step_days=7,
+            max_cloud=20,
+        )
+
+    start = date(2020, 1, 1)
+    end = start + timedelta(days=MAX_DATERANGE_DAYS + 1)
+    with pytest.raises(ValidationError):
+        normalize_timeseries_params(
+            start=start,
+            end=end,
+            step_days=7,
+            max_cloud=20,
+        )
+
+
+def test_normalize_latest_params_clamps_values() -> None:
+    params = normalize_latest_params(
+        lookback_days=MAX_DATERANGE_DAYS + 10, max_cloud=200
+    )
+    assert params.lookback_days == MAX_DATERANGE_DAYS
+    assert params.max_cloud == 100
+
+
+@pytest.mark.django_db
+def test_cache_latest_response_round_trip() -> None:
+    caches["default"].clear()
+    payload = {"ok": True}
+    params = LatestParams(lookback_days=7, max_cloud=30)
+    cache_latest_response(
+        owner_id=1,
+        farm_id=2,
+        engine=DEFAULT_ENGINE,
+        params=params,
+        payload=payload,
+    )
+    cached = get_cached_latest_response(
+        owner_id=1,
+        farm_id=2,
+        engine=DEFAULT_ENGINE,
+        params=params,
+    )
+    assert cached == payload
+
+    # Ensure cache entry respects the TTL path (coverage for cache set).
+    assert caches["default"].get(
+        f"ndvi:cache:latest:1:2:{DEFAULT_ENGINE}:7:30"
+    )
+
+
+def test_enforce_quota_raises_for_large_bbox() -> None:
+    huge = BBox(
+        south=Decimal("-90"),
+        west=Decimal("-180"),
+        north=Decimal("90"),
+        east=Decimal("180"),
+    )
+    farm = Farm(
+        owner=get_user_model()(username="owner"),
+        name="Farm",
+        slug="farm",
+    )
+    with pytest.raises(ValidationError):
+        enforce_quota(farm, huge)
+
+
+@pytest.mark.django_db
+def test_enqueue_job_returns_existing() -> None:
+    password = secrets.token_urlsafe(12)
+    user = get_user_model().objects.create_user(
+        username="job-owner",
+        email="job-owner@example.com",
+        password=password,
+    )
+    farm = Farm.objects.create(owner=user, name="Farm", slug="farm")
+    params = {
+        "start": date(2025, 1, 1),
+        "end": date(2025, 1, 2),
+        "step_days": 7,
+        "max_cloud": 30,
+    }
+    first = enqueue_job(
+        owner_id=user.id,
+        farm=farm,
+        engine=DEFAULT_ENGINE,
+        job_type=NdviJob.JobType.GAP_FILL,
+        params=params,
+    )
+    second = enqueue_job(
+        owner_id=user.id,
+        farm=farm,
+        engine=DEFAULT_ENGINE,
+        job_type=NdviJob.JobType.GAP_FILL,
+        params=params,
+    )
+    assert first.id == second.id
+
+
+@pytest.mark.django_db
+def test_is_stale_checks_observation_age() -> None:
+    assert is_stale(None, lookback_days=7)
+
+    password = secrets.token_urlsafe(12)
+    user = get_user_model().objects.create_user(
+        username="obs-owner",
+        email="obs-owner@example.com",
+        password=password,
+    )
+    farm = Farm.objects.create(owner=user, name="Farm", slug="farm-obs")
+    observation = NdviObservation.objects.create(
+        farm=farm,
+        engine=DEFAULT_ENGINE,
+        bucket_date=date.today(),
+        mean=0.2,
+    )
+    assert not is_stale(observation, lookback_days=7)
+
+
+def test_timeseries_params_dataclass() -> None:
+    params = TimeseriesParams(
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 2),
+        step_days=7,
+        max_cloud=30,
+    )
+    assert params.step_days == 7
+    assert params.max_cloud == 30
+
+
+def test_latest_params_dataclass() -> None:
+    params = LatestParams(lookback_days=7, max_cloud=30)
+    assert params.lookback_days == 7
+    assert params.max_cloud == 30

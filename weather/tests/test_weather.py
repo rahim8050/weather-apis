@@ -2,29 +2,52 @@ from __future__ import annotations
 
 # ruff: noqa: S101
 import asyncio
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
+from typing import cast
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
 from django.conf import LazySettings
 from django.core.cache import caches
 from django.utils import timezone as dj_timezone
+from rest_framework.exceptions import ValidationError
 
+from weather.engines.base import WeatherProvider
 from weather.engines.nasa_power import NasaPowerProvider
 from weather.engines.open_meteo import OpenMeteoProvider
-from weather.engines.types import DailyForecast, Location
+from weather.engines.registry import validate_provider
+from weather.engines.types import (
+    CurrentWeather,
+    DailyForecast,
+    Location,
+    ProviderName,
+    WeeklyReport,
+)
 from weather.metrics import (
     weather_cache_hits_total,
     weather_cache_misses_total,
     weather_provider_errors_total,
     weather_provider_requests_total,
 )
-from weather.serializers import serialize_current
+from weather.serializers import (
+    MAX_RANGE_DAYS,
+    BaseWeatherParamsSerializer,
+    RangeWeatherParamsSerializer,
+    serialize_current,
+    serialize_daily,
+    serialize_weekly,
+)
 from weather.services import (
     DEFAULT_TZ,
+    PROVIDER_REGISTRY,
+    CacheKey,
     _aggregate_weekly,
+    _fetch_daily_forecasts,
+    _select_provider,
     get_current_weather,
     get_daily_forecast,
+    get_weekly_report,
 )
 
 
@@ -331,3 +354,471 @@ def test_error_metrics_increment(monkeypatch: pytest.MonkeyPatch) -> None:
         )
     after = error_counter._value.get()
     assert after == before + 1
+
+
+def test_base_weather_params_timezone_and_provider_validation() -> None:
+    serializer = BaseWeatherParamsSerializer(
+        data={"lat": 1.0, "lon": 36.0, "tz": "Invalid/Zone"}
+    )
+    assert not serializer.is_valid()
+    assert "Invalid timezone." in serializer.errors["tz"][0]
+
+    serializer = BaseWeatherParamsSerializer(
+        data={"lat": 1.0, "lon": 36.0, "provider": "OPEN_METEO"}
+    )
+    assert serializer.is_valid()
+    assert serializer.validated_data["provider"] == "open_meteo"
+
+    serializer = BaseWeatherParamsSerializer(
+        data={"lat": 1.0, "lon": 36.0, "provider": "unknown"}
+    )
+    assert not serializer.is_valid()
+    assert "Unknown provider." in serializer.errors["provider"][0]
+
+    base = BaseWeatherParamsSerializer()
+    assert base.validate_provider(None) is None
+    assert base.validate_provider("") is None
+
+
+def test_range_weather_params_validation() -> None:
+    serializer = RangeWeatherParamsSerializer(
+        data={
+            "lat": 1.0,
+            "lon": 36.0,
+            "start": "2025-02-10",
+            "end": "2025-02-01",
+        }
+    )
+    assert not serializer.is_valid()
+    assert (
+        "start must be on or before end."
+        in serializer.errors["non_field_errors"][0]
+    )
+
+    start = date(2020, 1, 1)
+    end = start + timedelta(days=MAX_RANGE_DAYS + 1)
+    serializer = RangeWeatherParamsSerializer(
+        data={
+            "lat": 1.0,
+            "lon": 36.0,
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+        }
+    )
+    assert not serializer.is_valid()
+    assert "WEATHER_MAX_RANGE_DAYS" in serializer.errors["non_field_errors"][0]
+
+
+def test_serialization_helpers() -> None:
+    observed = datetime(2025, 1, 1, 8, 0)
+    current = CurrentWeather(
+        observed_at=observed,
+        temperature_c=20.0,
+        wind_speed_mps=3.0,
+        source="open_meteo",
+    )
+    current_data = serialize_current(current)
+    assert str(current_data["observed_at"]).endswith("+00:00")
+
+    daily = [
+        DailyForecast(
+            day=date(2025, 1, 1),
+            t_min_c=10.0,
+            t_max_c=20.0,
+            precipitation_mm=None,
+            source="open_meteo",
+        )
+    ]
+    daily_data = serialize_daily(daily)
+    assert daily_data[0]["day"] == date(2025, 1, 1).isoformat()
+
+    weekly = [
+        WeeklyReport(
+            week_start=date(2025, 1, 1),
+            week_end=date(2025, 1, 7),
+            t_min_avg_c=None,
+            t_max_avg_c=None,
+            precipitation_sum_mm=None,
+            days=daily,
+            source="open_meteo",
+        )
+    ]
+    weekly_data = serialize_weekly(weekly)
+    assert weekly_data[0]["week_start"] == date(2025, 1, 1).isoformat()
+
+
+def test_open_meteo_current_fallbacks_to_now(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_cache()
+    fixed_now = datetime(2025, 5, 1, tzinfo=UTC)
+
+    async def fake_request(
+        self: OpenMeteoProvider, params: dict[str, object]
+    ) -> dict[str, object]:
+        return {"current": {"temperature_2m": 21.0, "wind_speed_10m": 2.5}}
+
+    monkeypatch.setattr(OpenMeteoProvider, "_request", fake_request)
+    monkeypatch.setattr(
+        "weather.engines.open_meteo.timezone.now", lambda: fixed_now
+    )
+    provider = OpenMeteoProvider()
+    result = asyncio.run(
+        provider.current(Location(lat=1.0, lon=36.0, tz="UTC"))
+    )
+    assert result.observed_at == fixed_now
+
+
+def test_open_meteo_parse_helpers() -> None:
+    provider = OpenMeteoProvider()
+    zone = ZoneInfo("UTC")
+    assert provider._parse_datetime(None, zone) is None
+    assert provider._parse_datetime("bad", zone) is None
+    parsed = provider._parse_datetime("2025-01-01T00:00Z", zone)
+    assert parsed is not None
+    assert parsed.tzinfo is not None
+    assert provider._parse_date(None) is None
+    assert provider._parse_date("bad") is None
+    assert provider._list_value([1.0], 3) is None
+    assert provider._to_float(None) is None
+    assert provider._to_float("nope") is None
+
+
+def test_open_meteo_request_retries_on_500(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_cache()
+
+    class FakeResponse:
+        def __init__(self, status_code: int, payload: object) -> None:
+            self.status_code = status_code
+            self._payload = payload
+
+        def raise_for_status(self) -> None:
+            if self.status_code >= 400:
+                request = httpx.Request("GET", "https://example.com")
+                response = httpx.Response(self.status_code)
+                raise httpx.HTTPStatusError(
+                    "boom", request=request, response=response
+                )
+
+        def json(self) -> object:
+            return self._payload
+
+    response_iter = iter(
+        [
+            FakeResponse(502, {"error": "bad"}),
+            FakeResponse(200, {"ok": True}),
+        ]
+    )
+
+    class FakeAsyncClient:
+        async def __aenter__(self) -> FakeAsyncClient:
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        async def get(self, *_: object, **__: object) -> FakeResponse:
+            return next(response_iter)
+
+    async def fake_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_: FakeAsyncClient())
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+    provider = OpenMeteoProvider(max_retries=1, backoff_seconds=0.0)
+    payload = asyncio.run(provider._request({"lat": 1.0}))
+    assert payload == {"ok": True}
+
+
+def test_open_meteo_request_invalid_payload_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> object:
+            return ["bad"]
+
+    class FakeAsyncClient:
+        async def __aenter__(self) -> FakeAsyncClient:
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        async def get(self, *_: object, **__: object) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_: FakeAsyncClient())
+    provider = OpenMeteoProvider(max_retries=0)
+    with pytest.raises(ValueError, match="Unexpected Open-Meteo"):
+        asyncio.run(provider._request({"lat": 1.0}))
+
+
+def test_nasa_power_daily_skips_invalid_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload: dict[str, object] = {
+        "properties": {
+            "parameter": {
+                "T2M_MIN": ["bad"],
+                "T2M_MAX": {"bad": 10.0, "20250101": 21.0},
+                "PRECTOTCORR": {"20250101": 5.0},
+            },
+            "fill_value": -999,
+        }
+    }
+
+    async def fake_request(
+        self: NasaPowerProvider, params: dict[str, object]
+    ) -> dict[str, object]:
+        return payload
+
+    monkeypatch.setattr(NasaPowerProvider, "_request", fake_request)
+    provider = NasaPowerProvider()
+    forecasts = asyncio.run(
+        provider.daily(
+            Location(lat=1.0, lon=36.0, tz="UTC"),
+            date(2025, 1, 1),
+            date(2025, 1, 2),
+        )
+    )
+    assert len(forecasts) == 1
+    assert forecasts[0].day == date(2025, 1, 1)
+    assert forecasts[0].t_min_c is None
+
+
+def test_nasa_power_request_invalid_payload_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> object:
+            return ["bad"]
+
+    class FakeAsyncClient:
+        async def __aenter__(self) -> FakeAsyncClient:
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        async def get(self, *_: object, **__: object) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_: FakeAsyncClient())
+    provider = NasaPowerProvider()
+    with pytest.raises(ValueError, match="Unexpected NASA POWER"):
+        asyncio.run(provider._request({"lat": 1.0}))
+
+
+def test_nasa_power_helpers() -> None:
+    provider = NasaPowerProvider()
+    zone = ZoneInfo("UTC")
+    assert provider._parse_day_to_local("bad", zone) is None
+
+    assert provider._extract_value([], "20250101", -999) is None
+    assert (
+        provider._extract_value({"20250101": None}, "20250101", -999) is None
+    )
+    assert (
+        provider._extract_value({"20250101": -999}, "20250101", -999) is None
+    )
+    assert provider._extract_value({"20250101": "x"}, "20250101", -999) is None
+
+    class FlakyFloat:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __float__(self) -> float:
+            self.calls += 1
+            if self.calls == 1:
+                return 1.0
+            raise ValueError("boom")
+
+    assert (
+        provider._extract_value({"20250101": FlakyFloat()}, "20250101", -999)
+        is None
+    )
+
+    assert provider._choose_temperature(None) is None
+    assert (
+        provider._choose_temperature(
+            DailyForecast(
+                day=date(2025, 1, 1),
+                t_min_c=10.0,
+                t_max_c=20.0,
+                precipitation_mm=None,
+                source="nasa_power",
+            )
+        )
+        == 15.0
+    )
+    assert (
+        provider._choose_temperature(
+            DailyForecast(
+                day=date(2025, 1, 1),
+                t_min_c=None,
+                t_max_c=20.0,
+                precipitation_mm=None,
+                source="nasa_power",
+            )
+        )
+        == 20.0
+    )
+    assert (
+        provider._choose_temperature(
+            DailyForecast(
+                day=date(2025, 1, 1),
+                t_min_c=5.0,
+                t_max_c=None,
+                precipitation_mm=None,
+                source="nasa_power",
+            )
+        )
+        == 5.0
+    )
+
+
+def test_registry_validation_rejects_unknown_provider() -> None:
+    registry = cast(
+        dict[ProviderName, WeatherProvider],
+        {"open_meteo": OpenMeteoProvider()},
+    )
+    with pytest.raises(ValueError, match="Unsupported weather provider"):
+        validate_provider("nope", registry)
+
+
+def test_select_provider_invalid_raises_validation_error() -> None:
+    with pytest.raises(ValidationError):
+        _select_provider("nope")
+
+
+def test_get_current_weather_cache_hit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_cache()
+    provider = PROVIDER_REGISTRY["open_meteo"]
+    weather = CurrentWeather(
+        observed_at=datetime(2025, 1, 1, tzinfo=UTC),
+        temperature_c=20.0,
+        wind_speed_mps=3.0,
+        source="open_meteo",
+    )
+    key = CacheKey(
+        endpoint="current",
+        provider="open_meteo",
+        lat=1.0,
+        lon=2.0,
+        tz=DEFAULT_TZ,
+    )
+    caches["default"].set(key.as_string(), weather, 60)
+    monkeypatch.setattr(provider, "current", lambda *_: None)
+    result = asyncio.run(get_current_weather(lat=1.0, lon=2.0, tz=DEFAULT_TZ))
+    assert result == weather
+
+
+def test_get_current_weather_error_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_cache()
+
+    async def failing_current(*_: object, **__: object) -> None:
+        raise RuntimeError("boom")
+
+    provider = PROVIDER_REGISTRY["open_meteo"]
+    monkeypatch.setattr(provider, "current", failing_current)
+    with pytest.raises(RuntimeError):
+        asyncio.run(get_current_weather(lat=1.0, lon=2.0, tz=DEFAULT_TZ))
+
+
+def test_fetch_daily_forecasts_validation_errors() -> None:
+    with pytest.raises(ValidationError):
+        asyncio.run(
+            _fetch_daily_forecasts(
+                lat=1.0,
+                lon=2.0,
+                start=date(2025, 2, 2),
+                end=date(2025, 2, 1),
+                tz=DEFAULT_TZ,
+                provider=None,
+                endpoint_label="daily",
+            )
+        )
+
+    start = date(2020, 1, 1)
+    end = start + timedelta(days=MAX_RANGE_DAYS + 2)
+    with pytest.raises(ValidationError):
+        asyncio.run(
+            _fetch_daily_forecasts(
+                lat=1.0,
+                lon=2.0,
+                start=start,
+                end=end,
+                tz=DEFAULT_TZ,
+                provider=None,
+                endpoint_label="daily",
+            )
+        )
+
+
+def test_get_weekly_report_caches(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_cache()
+    calls = {"count": 0}
+
+    async def fake_fetch(*_: object, **__: object) -> list[DailyForecast]:
+        calls["count"] += 1
+        return [
+            DailyForecast(
+                day=date(2025, 1, 1),
+                t_min_c=None,
+                t_max_c=None,
+                precipitation_mm=None,
+                source="open_meteo",
+            )
+        ]
+
+    monkeypatch.setattr("weather.services._fetch_daily_forecasts", fake_fetch)
+    first = asyncio.run(
+        get_weekly_report(
+            lat=1.0,
+            lon=2.0,
+            start=date(2025, 1, 1),
+            end=date(2025, 1, 1),
+            tz=DEFAULT_TZ,
+            provider="open_meteo",
+        )
+    )
+    second = asyncio.run(
+        get_weekly_report(
+            lat=1.0,
+            lon=2.0,
+            start=date(2025, 1, 1),
+            end=date(2025, 1, 1),
+            tz=DEFAULT_TZ,
+            provider="open_meteo",
+        )
+    )
+    assert calls["count"] == 1
+    assert first == second
+
+
+def test_aggregate_weekly_with_missing_precipitation() -> None:
+    forecasts = [
+        DailyForecast(
+            day=date(2025, 1, 6),
+            t_min_c=10.0,
+            t_max_c=20.0,
+            precipitation_mm=None,
+            source="open_meteo",
+        )
+    ]
+    reports = _aggregate_weekly(forecasts, "open_meteo")
+    assert reports[0].precipitation_sum_mm is None

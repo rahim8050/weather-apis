@@ -4,9 +4,12 @@ import secrets
 from typing import Final, Protocol, TypeAlias, cast
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.core.cache import caches
 from rest_framework import status
 from rest_framework.test import APITestCase
+
+from accounts.auth_backends import UsernameOrEmailBackend
 
 JSONScalar: TypeAlias = str | int | float | bool | None
 JSONValue: TypeAlias = JSONScalar | list["JSONValue"] | dict[str, "JSONValue"]
@@ -264,6 +267,28 @@ class AccountsTests(APITestCase):
         self.client.credentials()
         relogin = self._login(u, new_pw)
         self.assertEqual(relogin.status_code, status.HTTP_200_OK)
+
+    def test_auth_backend_missing_login_or_password_returns_none(self) -> None:
+        backend = UsernameOrEmailBackend()
+        password = self._pw()
+        self.assertIsNone(
+            backend.authenticate(None, username=None, password=password)
+        )
+        self.assertIsNone(
+            backend.authenticate(None, username="user", password=None)
+        )
+
+    def test_auth_backend_user_not_found_returns_none(self) -> None:
+        backend = UsernameOrEmailBackend()
+        password = self._pw()
+        get_user_model().objects.create_user(
+            username="existing",
+            email="existing@example.com",
+            password=password,
+        )
+        self.assertIsNone(
+            backend.authenticate(None, username="missing", password=password)
+        )
 
     def setUp(self) -> None:
         super().setUp()
