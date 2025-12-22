@@ -128,19 +128,33 @@ TEMPLATES = [
 WSGI_APPLICATION = "config.wsgi.application"
 
 
-# Database
 # --- Database ---
 DATABASES = {
     "default": dj_database_url.config(
-        # fallback for local dev if DATABASE_URL not set
         default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
         conn_max_age=600,
         ssl_require=IS_PROD,
     )
 }
 
+# --- Prometheus DB instrumentation ---
+_engine = DATABASES["default"].get("ENGINE")
+if _engine == "django.db.backends.postgresql":
+    DATABASES["default"]["ENGINE"] = "django_prometheus.db.backends.postgresql"
+elif _engine == "django.db.backends.postgresql_psycopg2":
+    DATABASES["default"]["ENGINE"] = "django_prometheus.db.backends.postgresql"
+elif _engine == "django.db.backends.mysql":
+    DATABASES["default"]["ENGINE"] = "django_prometheus.db.backends.mysql"
+elif _engine == "django.db.backends.sqlite3":
+    # optional:
+    # DATABASES["default"]["ENGINE"] = "django_prometheus.db.backends.sqlite3"
+    pass
+
 # --- MySQL specific tuning ---
-if DATABASES["default"].get("ENGINE") == "django.db.backends.mysql":
+if DATABASES["default"].get("ENGINE") in {
+    "django.db.backends.mysql",
+    "django_prometheus.db.backends.mysql",
+}:
     DATABASES["default"].setdefault("OPTIONS", {})
     DATABASES["default"]["OPTIONS"].update(
         {
@@ -155,6 +169,8 @@ if DATABASES["default"].get("ENGINE") == "django.db.backends.mysql":
 # --- Pytest: in-memory SQLite ---
 if IS_TESTING:
     DATABASES = {
+        # keep plain sqlite OR switch to django_prometheus.db.backends.sqlite3
+        # (optional)
         "default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}
     }
 
