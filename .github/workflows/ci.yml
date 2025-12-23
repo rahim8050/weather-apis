@@ -49,6 +49,9 @@ jobs:
       MYSQL_USER: "test_user"
       MYSQL_PASSWORD: "test_pass"
 
+      # Optional: if your settings read DATABASE_URL, this forces MySQL instead of SQLite
+      DATABASE_URL: "mysql://test_user:test_pass@127.0.0.1:3306/test_db"
+
       # Coverage gate (adjust to your standard)
       COVERAGE_FAIL_UNDER: "90"
 
@@ -144,8 +147,9 @@ jobs:
           if [ -f manage.py ]; then
             # Keep Django test runner behavior, just wrap with coverage
             python -m coverage run --source="." manage.py test --verbosity 2 --no-input
-            python -m coverage report --fail-under="${COVERAGE_FAIL_UNDER}"
+            # Always generate XML before enforcing fail-under (so artifacts/Codecov still work)
             python -m coverage xml
+            python -m coverage report --fail-under="${COVERAGE_FAIL_UNDER}"
           else
             # Keep pytest behavior, enforce coverage
             python -m pytest -q --cov=. --cov-report=term-missing --cov-report=xml --cov-fail-under="${COVERAGE_FAIL_UNDER}"
