@@ -49,6 +49,9 @@ jobs:
       MYSQL_USER: "test_user"
       MYSQL_PASSWORD: "test_pass"
 
+      # Coverage gate (adjust to your standard)
+      COVERAGE_FAIL_UNDER: "90"
+
       # Python hygiene
       PYTHONDONTWRITEBYTECODE: "1"
       PYTHONUNBUFFERED: "1"
@@ -86,6 +89,23 @@ jobs:
             poetry install --no-interaction --no-ansi
           fi
 
+      - name: Python import sanity (compileall)
+        run: python -m compileall -q .
+
+      - name: Wait for MySQL port
+        run: |
+          set -e
+          for i in $(seq 1 30); do
+            if (echo > /dev/tcp/127.0.0.1/3306) >/dev/null 2>&1; then
+              echo "MySQL port is reachable."
+              exit 0
+            fi
+            echo "Waiting for MySQL... ($i/30)"
+            sleep 2
+          done
+          echo "MySQL did not become reachable in time."
+          exit 1
+
       - name: Ruff (lint)
         run: python -m ruff check .
 
@@ -103,14 +123,48 @@ jobs:
             python -m bandit -r . -x ".venv,tests,**/migrations/*"
           fi
 
-      - name: Tests
+      - name: Django checks (migrations + system checks + migrate)
         run: |
           set -e
           if [ -f manage.py ]; then
-            python manage.py test --verbosity 2 --no-input
+            python manage.py check
+            # Deployment-oriented checks (won't fail on warnings by default)
+            python manage.py check --deploy
+            # Fail CI if there are model changes without migrations
+            python manage.py makemigrations --check --dry-run
+            # Ensure migrations apply cleanly on a fresh DB
+            python manage.py migrate --no-input
           else
-            python -m pytest -q
+            echo "No manage.py found; skipping Django checks."
           fi
+
+      - name: Tests (with coverage gate)
+        run: |
+          set -e
+          if [ -f manage.py ]; then
+            # Keep Django test runner behavior, just wrap with coverage
+            python -m coverage run --source="." manage.py test --verbosity 2 --no-input
+            python -m coverage report --fail-under="${COVERAGE_FAIL_UNDER}"
+            python -m coverage xml
+          else
+            # Keep pytest behavior, enforce coverage
+            python -m pytest -q --cov=. --cov-report=term-missing --cov-report=xml --cov-fail-under="${COVERAGE_FAIL_UNDER}"
+          fi
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: ignore
+            - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          fail_ci_if_error: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Compute duration
         if: always()
