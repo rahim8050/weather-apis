@@ -5,7 +5,12 @@ from typing import Final, Protocol, TypeAlias, cast
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.contrib.auth.tokens import default_token_generator
+from django.core import mail
 from django.core.cache import caches
+from django.test import override_settings
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -27,6 +32,12 @@ class AccountsTests(APITestCase):
     REFRESH_URL: Final[str] = "/api/v1/auth/token/refresh/"
     ME_URL: Final[str] = "/api/v1/auth/me/"
     PW_CHANGE_URL: Final[str] = "/api/v1/auth/password/change/"
+    PW_RESET_URL: Final[str] = "/api/v1/auth/password/reset/"
+    PW_RESET_CONFIRM_URL: Final[str] = "/api/v1/auth/password/reset/confirm/"
+    PW_RESET_MESSAGE: Final[str] = (
+        "If an account exists for this email, a reset link has been sent."
+    )
+    PW_RESET_CONFIRM_MESSAGE: Final[str] = "Password has been reset."
 
     def _user(self) -> str:
         return f"user_{secrets.token_hex(6)}"
@@ -86,6 +97,33 @@ class AccountsTests(APITestCase):
             self.client.post(
                 self.LOGIN_URL,
                 {"identifier": identifier, "password": password},
+                format="json",
+            ),
+        )
+
+    def _password_reset_request(self, email: str) -> JsonClientResponse:
+        return cast(
+            JsonClientResponse,
+            self.client.post(
+                self.PW_RESET_URL,
+                {"email": email},
+                format="json",
+            ),
+        )
+
+    def _password_reset_confirm(
+        self, uid: str, token: str, new_password: str
+    ) -> JsonClientResponse:
+        payload = {
+            "uid": uid,
+            "token": token,
+            "new_password": new_password,
+        }
+        return cast(
+            JsonClientResponse,
+            self.client.post(
+                self.PW_RESET_CONFIRM_URL,
+                payload,
                 format="json",
             ),
         )
@@ -267,6 +305,110 @@ class AccountsTests(APITestCase):
         self.client.credentials()
         relogin = self._login(u, new_pw)
         self.assertEqual(relogin.status_code, status.HTTP_200_OK)
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        FRONTEND_RESET_URL="https://frontend.example/reset",
+        DEFAULT_FROM_EMAIL="noreply@example.com",
+    )
+    def test_password_reset_request_existing_email_sends_email(self) -> None:
+        username = self._user()
+        email = self._email(username)
+        get_user_model().objects.create_user(
+            username=username,
+            email=email,
+            password=self._pw(),
+        )
+
+        mail.outbox.clear()
+        resp = self._password_reset_request(email)
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+
+        body = resp.json()
+        self.assertEqual(body.get("status"), 0)
+        self.assertEqual(body.get("message"), self.PW_RESET_MESSAGE)
+        self.assertIsNone(body.get("data"))
+        self.assertIsNone(body.get("errors"))
+        self.assertEqual(len(mail.outbox), 1)
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        FRONTEND_RESET_URL="https://frontend.example/reset",
+        DEFAULT_FROM_EMAIL="noreply@example.com",
+    )
+    def test_password_reset_request_non_existing_email_sends_no_email(
+        self,
+    ) -> None:
+        mail.outbox.clear()
+        resp = self._password_reset_request("missing@example.com")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+
+        body = resp.json()
+        self.assertEqual(body.get("status"), 0)
+        self.assertEqual(body.get("message"), self.PW_RESET_MESSAGE)
+        self.assertIsNone(body.get("data"))
+        self.assertIsNone(body.get("errors"))
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_password_reset_confirm_valid_token_resets_password(self) -> None:
+        username = self._user()
+        email = self._email(username)
+        initial_pw = self._pw()
+        user = get_user_model().objects.create_user(
+            username=username,
+            email=email,
+            password=initial_pw,
+        )
+
+        uidb64 = urlsafe_base64_encode(force_bytes(user.pk))
+        token = default_token_generator.make_token(user)
+        new_pw = self._pw()
+
+        resp = self._password_reset_confirm(uidb64, token, new_pw)
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+
+        body = resp.json()
+        self.assertEqual(body.get("status"), 0)
+        self.assertEqual(body.get("message"), self.PW_RESET_CONFIRM_MESSAGE)
+
+        user.refresh_from_db()
+        self.assertTrue(user.check_password(new_pw))
+
+    def test_password_reset_confirm_invalid_token_returns_error(self) -> None:
+        username = self._user()
+        email = self._email(username)
+        user = get_user_model().objects.create_user(
+            username=username,
+            email=email,
+            password=self._pw(),
+        )
+
+        uidb64 = urlsafe_base64_encode(force_bytes(user.pk))
+        resp = self._password_reset_confirm(
+            uidb64, "invalid-token", self._pw()
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+        body = resp.json()
+        self.assertEqual(body.get("status"), 1)
+        self.assertEqual(body.get("message"), "Invalid or expired reset link.")
+        self.assertIsNone(body.get("data"))
+
+        errors = self._as_dict(body.get("errors"), "errors")
+        self.assertEqual(
+            errors.get("token"),
+            ["Invalid or expired token."],
+        )
+
+    def test_password_reset_request_throttles(self) -> None:
+        email = "missing@example.com"
+        for _ in range(5):
+            resp = self._password_reset_request(email)
+            self.assertEqual(resp.status_code, status.HTTP_200_OK)
+
+        resp = self._password_reset_request(email)
+        self.assertEqual(resp.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+        self.assertEqual(resp.json().get("status"), 1)
 
     def test_auth_backend_missing_login_or_password_returns_none(self) -> None:
         backend = UsernameOrEmailBackend()

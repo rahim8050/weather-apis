@@ -9,7 +9,8 @@ first-party API keys (`X-API-Key`) for service-to-service calls.
 
 ## Features
 
-- Auth: register/login, token refresh, profile, password change (`/api/v1/auth/`)
+- Auth: register/login, token refresh, profile, password change/reset
+  (`/api/v1/auth/`)
 - API keys: create/list/revoke/rotate (JWT-only) (`/api/v1/keys/`)
 - Farms: CRUD for user-owned farms (`/api/v1/farms/`)
 - NDVI: timeseries/latest, raster retrieval and queueing, job status (`/api/v1/…/ndvi/`)
@@ -80,6 +81,17 @@ DJANGO_API_KEY_PEPPER=long-random-string
 # JWT lifetime settings
 SIMPLE_JWT_ACCESS_MINUTES=15
 SIMPLE_JWT_REFRESH_DAYS=7
+
+# Password reset + email
+FRONTEND_RESET_URL=https://frontend.example/reset
+DEFAULT_FROM_EMAIL=no-reply@example.com
+EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+EMAIL_HOST=localhost
+EMAIL_PORT=25
+EMAIL_HOST_USER=
+EMAIL_HOST_PASSWORD=
+EMAIL_USE_TLS=False
+EMAIL_USE_SSL=False
 
 # Throttling
 API_KEY_THROTTLE_RATE=500/min
@@ -175,6 +187,67 @@ Global DRF auth includes:
 
 Not all endpoints accept both:
 - `/api/v1/keys/` is JWT-only by design (from code: `api_keys/views.py`).
+
+### Password reset
+
+Endpoints:
+- POST `/api/v1/auth/password/reset/`
+- POST `/api/v1/auth/password/reset/confirm/`
+
+Reset request (always returns 200 with a generic message):
+
+```bash
+curl -sS -X POST http://localhost:8000/api/v1/auth/password/reset/ \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"alice@example.com"}'
+```
+
+Response:
+
+```json
+{
+  "status": 0,
+  "message": "If an account exists for this email, a reset link has been sent.",
+  "data": null,
+  "errors": null
+}
+```
+
+Reset confirm:
+
+```bash
+curl -sS -X POST http://localhost:8000/api/v1/auth/password/reset/confirm/ \
+  -H 'Content-Type: application/json' \
+  -d '{"uid":"<uidb64>","token":"<token>","new_password":"StrongPass123!"}'
+```
+
+Success response:
+
+```json
+{
+  "status": 0,
+  "message": "Password has been reset.",
+  "data": null,
+  "errors": null
+}
+```
+
+Invalid/expired token response:
+
+```json
+{
+  "status": 1,
+  "message": "Invalid or expired reset link.",
+  "data": null,
+  "errors": { "token": ["Invalid or expired token."] }
+}
+```
+
+Required settings/env vars:
+- `FRONTEND_RESET_URL` (used to build `"<FRONTEND_RESET_URL>?uid=<uidb64>&token=<token>"`)
+- `DEFAULT_FROM_EMAIL`
+- `EMAIL_BACKEND`, `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`,
+  `EMAIL_HOST_PASSWORD`, `EMAIL_USE_TLS`, `EMAIL_USE_SSL`
 
 ## Observability
 

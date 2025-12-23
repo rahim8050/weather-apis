@@ -250,6 +250,20 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 
+FRONTEND_RESET_URL = env("FRONTEND_RESET_URL", default="")
+
+EMAIL_BACKEND = env(
+    "EMAIL_BACKEND",
+    default="django.core.mail.backends.smtp.EmailBackend",
+)
+EMAIL_HOST = env("EMAIL_HOST", default="localhost")
+EMAIL_PORT = env.int("EMAIL_PORT", default=25)
+EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
+EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
+EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=False)
+EMAIL_USE_SSL = env.bool("EMAIL_USE_SSL", default=False)
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="no-reply@localhost")
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
@@ -270,6 +284,8 @@ REST_FRAMEWORK = {
         "register": "5/min",
         "login": "10/min",
         "token_refresh": "20/min",
+        "password_reset": "5/min",
+        "password_reset_confirm": "10/min",
         "api_key": API_KEY_THROTTLE_RATE,
     },
     "EXCEPTION_HANDLER": "config.api.exceptions.custom_exception_handler",
