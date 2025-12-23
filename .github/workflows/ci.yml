@@ -144,16 +144,24 @@ jobs:
       - name: Tests (with coverage gate)
         run: |
           set -e
-          if [ -f manage.py ]; then
-            # Keep Django test runner behavior, just wrap with coverage
+          if [ -f pytest.ini ]; then
+            python -m pytest -q \
+              --cov=. \
+              --cov-report=term-missing \
+              --cov-report=xml \
+              --cov-fail-under="${COVERAGE_FAIL_UNDER}"
+          elif [ -f manage.py ]; then
             python -m coverage run --source="." manage.py test --verbosity 2 --no-input
-            # Always generate XML before enforcing fail-under (so artifacts/Codecov still work)
             python -m coverage xml
             python -m coverage report --fail-under="${COVERAGE_FAIL_UNDER}"
           else
-            # Keep pytest behavior, enforce coverage
-            python -m pytest -q --cov=. --cov-report=term-missing --cov-report=xml --cov-fail-under="${COVERAGE_FAIL_UNDER}"
+            python -m pytest -q \
+              --cov=. \
+              --cov-report=term-missing \
+              --cov-report=xml \
+              --cov-fail-under="${COVERAGE_FAIL_UNDER}"
           fi
+
 
       - name: Upload coverage artifact
         if: always()
