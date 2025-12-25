@@ -16,7 +16,7 @@ click-repl==0.3.0
 coverage==7.13.0
 distlib==0.4.0
 dj-database-url==3.0.1
-Django==5.1.15
+Django==5.2.9
 django-environ==0.12.0
 django-extensions==4.1
 django-prometheus==2.4.1
