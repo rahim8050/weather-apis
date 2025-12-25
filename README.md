@@ -198,8 +198,19 @@ also require a user identity.
 Ping endpoint (HMAC-only, no JWT/API key):
 - GET `/api/v1/integrations/nextcloud/ping/`
 
+#### Integration clients (admin-only)
+
+Admin endpoints (JWT + `IsAdminUser`) for managing HMAC clients:
+- POST `/api/v1/integrations/clients/` → creates a client and returns the secret once
+- POST `/api/v1/integrations/clients/{id}/rotate-secret/` → rotates and returns the new secret once
+- GET/PATCH `/api/v1/integrations/clients/{id}/` → no secret fields are ever returned
+
+Secret rotation supports an overlap window: during the overlap, both the active
+and previous secret are accepted for HMAC verification. Configure the overlap
+TTL via `INTEGRATIONS_HMAC_PREVIOUS_TTL_SECONDS` (default: 72 hours).
+
 Required headers:
-- `X-NC-CLIENT-ID`
+- `X-Client-Id` (preferred) or `X-NC-CLIENT-ID` (deprecated alias)
 - `X-NC-TIMESTAMP` (unix seconds)
 - `X-NC-NONCE` (unique per request)
 - `X-NC-SIGNATURE` (hex HMAC-SHA256 of the canonical string)
@@ -213,6 +224,7 @@ Environment variables (from code: `config/settings.py`):
 - `NEXTCLOUD_HMAC_NONCE_TTL_SECONDS` (default `300`)
 - `NEXTCLOUD_HMAC_CACHE_ALIAS` (default `default`)
 - `NEXTCLOUD_HMAC_CLIENTS_JSON` (JSON map of `client_id -> shared_secret`)
+- `INTEGRATIONS_HMAC_PREVIOUS_TTL_SECONDS` (rotation overlap window)
 
 Full contract, examples, and guidance for endpoint protection (v1/v2) live in
 `docs/security/nextcloud-hmac.md`.
@@ -238,7 +250,7 @@ PY
 
 ```bash
 curl -sS "http://localhost:8000/api/v1/integrations/nextcloud/ping/" \
-  -H "X-NC-CLIENT-ID: nc-dev-1" \
+  -H "X-Client-Id: <client-uuid>" \
   -H "X-NC-TIMESTAMP: 1700000000" \
   -H "X-NC-NONCE: <uuid>" \
   -H "X-NC-SIGNATURE: <hex>"

@@ -8,21 +8,25 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import time
+import uuid
 from dataclasses import dataclass
 from urllib.parse import parse_qsl, quote
 
 from django.conf import settings
 from django.core.cache import caches
-from django.utils.crypto import constant_time_compare
 from rest_framework.request import Request
 
 NEXTCLOUD_CLIENT_ID_HEADER = "X-NC-CLIENT-ID"
 NEXTCLOUD_TIMESTAMP_HEADER = "X-NC-TIMESTAMP"
 NEXTCLOUD_NONCE_HEADER = "X-NC-NONCE"
 NEXTCLOUD_SIGNATURE_HEADER = "X-NC-SIGNATURE"
+INTEGRATIONS_CLIENT_ID_HEADER = "X-Client-Id"
 
 _RFC3986_SAFE = "-_.~"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +107,8 @@ def compute_hmac_signature_hex(*, secret: str, canonical_string: str) -> str:
 
 def _get_required_headers(request: Request) -> NextcloudHMACHeaders:
     client_id = request.headers.get(NEXTCLOUD_CLIENT_ID_HEADER)
+    if not client_id:
+        client_id = request.headers.get(INTEGRATIONS_CLIENT_ID_HEADER)
     timestamp_raw = request.headers.get(NEXTCLOUD_TIMESTAMP_HEADER)
     nonce = request.headers.get(NEXTCLOUD_NONCE_HEADER)
     signature = request.headers.get(NEXTCLOUD_SIGNATURE_HEADER)
@@ -137,10 +143,37 @@ def verify_nextcloud_hmac_request(request: Request) -> str:
 
     headers = _get_required_headers(request)
 
-    clients: dict[str, str] = getattr(settings, "NEXTCLOUD_HMAC_CLIENTS", {})
-    secret = clients.get(headers.client_id)
-    if secret is None:
-        raise NextcloudHMACVerificationError("Unknown Nextcloud client_id")
+    secrets_to_try: list[str] = []
+    matched_integration_client_previous_secret = False
+
+    integration_client_id: uuid.UUID | None = None
+    try:
+        integration_client_id = uuid.UUID(headers.client_id)
+    except ValueError:
+        integration_client_id = None
+
+    if integration_client_id is not None:
+        # Lazy import: avoid importing models at module import time.
+        from .models import IntegrationClient
+
+        integration_client = IntegrationClient.objects.filter(
+            client_id=integration_client_id
+        ).first()
+        if integration_client is not None:
+            if not integration_client.is_active:
+                raise NextcloudHMACVerificationError(
+                    "Integration client is disabled"
+                )
+            secrets_to_try = list(integration_client.candidate_secrets())
+
+    if not secrets_to_try:
+        clients: dict[str, str] = getattr(
+            settings, "NEXTCLOUD_HMAC_CLIENTS", {}
+        )
+        secret = clients.get(headers.client_id)
+        if secret is None:
+            raise NextcloudHMACVerificationError("Unknown Nextcloud client_id")
+        secrets_to_try = [secret]
 
     now = int(time.time())
     max_skew = int(getattr(settings, "NEXTCLOUD_HMAC_MAX_SKEW_SECONDS", 300))
@@ -165,11 +198,32 @@ def verify_nextcloud_hmac_request(request: Request) -> str:
         ),
     )
     expected_sig = compute_hmac_signature_hex(
-        secret=secret,
+        secret=secrets_to_try[0],
         canonical_string=canonical,
     )
-    if not constant_time_compare(headers.signature, expected_sig):
-        raise NextcloudHMACVerificationError("Invalid Nextcloud signature")
+    if hmac.compare_digest(headers.signature, expected_sig):
+        matched_integration_client_previous_secret = False
+    else:
+        matched = False
+        for idx, candidate_secret in enumerate(secrets_to_try[1:], start=1):
+            candidate_sig = compute_hmac_signature_hex(
+                secret=candidate_secret,
+                canonical_string=canonical,
+            )
+            if hmac.compare_digest(headers.signature, candidate_sig):
+                matched = True
+                matched_integration_client_previous_secret = idx > 0
+                break
+        if not matched:
+            raise NextcloudHMACVerificationError("Invalid Nextcloud signature")
+
+    if matched_integration_client_previous_secret:
+        logger.info(
+            "nextcloud_hmac.verified_with_previous_secret "
+            "client_id=%s path=%s",
+            headers.client_id,
+            request.path,
+        )
 
     cache_alias = str(
         getattr(settings, "NEXTCLOUD_HMAC_CACHE_ALIAS", "default")

@@ -334,6 +334,14 @@ NEXTCLOUD_HMAC_CACHE_ALIAS = env(
     "NEXTCLOUD_HMAC_CACHE_ALIAS", default="default"
 )
 
+# HMAC secret rotation overlap window (seconds).
+# Default: 72 hours to allow propagation while limiting exposure if a secret
+# leaks.
+INTEGRATIONS_HMAC_PREVIOUS_TTL_SECONDS = env.int(
+    "INTEGRATIONS_HMAC_PREVIOUS_TTL_SECONDS",
+    default=259200,
+)
+
 _nextcloud_hmac_clients_raw = env("NEXTCLOUD_HMAC_CLIENTS_JSON", default="{}")
 try:
     _nextcloud_hmac_clients_parsed = json.loads(_nextcloud_hmac_clients_raw)
