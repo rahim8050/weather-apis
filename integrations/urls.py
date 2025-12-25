@@ -7,6 +7,11 @@ from .views import IntegrationPingView, NextcloudPingView
 
 urlpatterns = [
     path(
+        "nextcloud/ping/",
+        NextcloudPingView.as_view(),
+        name="nextcloud-hmac",
+    ),
+    path(
         "integrations/nextcloud/ping/",
         NextcloudPingView.as_view(),
         name="nextcloud-ping",
