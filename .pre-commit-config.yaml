@@ -38,4 +38,5 @@ repos:
           - redis
           - httpx
           - pytest-django
+          - django-extensions
           

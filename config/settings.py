@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 
+import json
 import os
 import sys
 from datetime import timedelta
@@ -72,11 +73,13 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "django_prometheus",
+    "django_extensions",
     "rest_framework",
     "drf_spectacular",
     "rest_framework_simplejwt",
     "accounts",
     "api_keys",
+    "integrations",
     "farms",
     "ndvi",
     "weather",
@@ -317,6 +320,53 @@ if DJANGO_API_KEY_PEPPER is None:
     # dev/ci/tests default (not a real secret)
     DJANGO_API_KEY_PEPPER = "dev-pepper"
 
+# Nextcloud request signing (HMAC)
+NEXTCLOUD_HMAC_ENABLED = env.bool("NEXTCLOUD_HMAC_ENABLED", default=True)
+NEXTCLOUD_HMAC_MAX_SKEW_SECONDS = env.int(
+    "NEXTCLOUD_HMAC_MAX_SKEW_SECONDS",
+    default=300,
+)
+NEXTCLOUD_HMAC_NONCE_TTL_SECONDS = env.int(
+    "NEXTCLOUD_HMAC_NONCE_TTL_SECONDS",
+    default=360,
+)
+NEXTCLOUD_HMAC_CACHE_ALIAS = env(
+    "NEXTCLOUD_HMAC_CACHE_ALIAS", default="default"
+)
+
+_nextcloud_hmac_clients_raw = env("NEXTCLOUD_HMAC_CLIENTS_JSON", default="{}")
+try:
+    _nextcloud_hmac_clients_parsed = json.loads(_nextcloud_hmac_clients_raw)
+except json.JSONDecodeError as exc:  # pragma: no cover
+    raise ImproperlyConfigured(
+        "NEXTCLOUD_HMAC_CLIENTS_JSON must be valid JSON"
+    ) from exc
+
+if not isinstance(_nextcloud_hmac_clients_parsed, dict):  # pragma: no cover
+    raise ImproperlyConfigured(
+        "NEXTCLOUD_HMAC_CLIENTS_JSON must be a JSON object"
+    )
+
+NEXTCLOUD_HMAC_CLIENTS: dict[str, str] = {}
+for _client_id, _secret in _nextcloud_hmac_clients_parsed.items():
+    if not isinstance(_client_id, str) or not isinstance(
+        _secret, str
+    ):  # pragma: no cover
+        raise ImproperlyConfigured(
+            "NEXTCLOUD_HMAC_CLIENTS_JSON must map strings to strings"
+        )
+    if not _client_id or not _secret:  # pragma: no cover
+        raise ImproperlyConfigured(
+            "NEXTCLOUD_HMAC_CLIENTS_JSON cannot contain empty keys or values"
+        )
+    NEXTCLOUD_HMAC_CLIENTS[_client_id] = _secret
+
+if NEXTCLOUD_HMAC_CACHE_ALIAS not in CACHES:  # pragma: no cover
+    raise ImproperlyConfigured(
+        "NEXTCLOUD_HMAC_CACHE_ALIAS must be one of: "
+        f"{', '.join(CACHES.keys())}"
+    )
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
@@ -328,17 +378,23 @@ SPECTACULAR_SETTINGS = {
     "API key lifecycle management.",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
-    "SECURITY_SCHEMES": {
-        "BearerAuth": {
-            "type": "http",
-            "scheme": "bearer",
-            "bearerFormat": "JWT",
+    "APPEND_COMPONENTS": {
+        "securitySchemes": {
+            "BearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "JWT",
+            },
+            "ApiKeyAuth": {
+                "type": "apiKey",
+                "in": "header",
+                "name": "X-API-Key",
+            },
         },
-        "ApiKeyAuth": {
-            "type": "apiKey",
-            "in": "header",
-            "name": "X-API-Key",
-        },
+    },
+    "ENUM_NAME_OVERRIDES": {
+        "ApiKeyScopeEnum": "api_keys.models.ApiKeyScope",
+        "ApiKeyScopeValueEnum": ("read", "write", "admin"),
     },
 }
 

@@ -23,6 +23,7 @@ Including another URLconf
 # - /api/redoc/ -> ReDoc
 # - /api/v1/auth/ -> accounts.urls
 # - /api/v1/keys/ -> api_keys.urls
+# - /api/v1/integrations/ -> integrations.urls
 
 from django.contrib import admin
 from django.urls import include, path
@@ -51,6 +52,7 @@ urlpatterns = [
     ),
     path("api/v1/auth/", include("accounts.urls")),
     path("api/v1/keys/", include("api_keys.urls")),
+    path("api/v1/integration/", include("integrations.urls")),
     path("api/v1/", include("farms.urls")),
     path("api/v1/", include("ndvi.urls")),
     path("api/v1/", include("weather.urls")),

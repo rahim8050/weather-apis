@@ -40,6 +40,9 @@ exclude = ["**/migrations/**"]
 select = ["E", "F", "I", "B", "UP", "N", "S", "ANN"]
 ignore = ["ANN401","ANN102","ANN101"]
 
+[tool.ruff.lint.per-file-ignores]
+"integrations/tests/**/*.py" = ["S101"]
+
 [tool.bandit]
 skips = ["B101"]
 exclude_dirs = [

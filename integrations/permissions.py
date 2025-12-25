@@ -1,0 +1,32 @@
+"""DRF permission for Nextcloud HMAC request signing.
+
+This permission is designed to be composed with existing JWT and API key auth
+without changing the global authentication stack.
+"""
+
+from __future__ import annotations
+
+from typing import Any, cast
+
+from rest_framework.exceptions import PermissionDenied
+from rest_framework.permissions import BasePermission
+from rest_framework.request import Request
+from rest_framework.views import APIView
+
+from .hmac import NextcloudHMACVerificationError, verify_nextcloud_hmac_request
+
+
+class NextcloudHMACPermission(BasePermission):
+    """Require a valid Nextcloud instance HMAC signature.
+
+    When valid, sets `request.nc_hmac_client_id` for downstream use.
+    """
+
+    def has_permission(self, request: Request, view: APIView) -> bool:
+        try:
+            client_id = verify_nextcloud_hmac_request(request)
+        except NextcloudHMACVerificationError as exc:
+            raise PermissionDenied("Invalid Nextcloud signature") from exc
+
+        cast(Any, request).nc_hmac_client_id = client_id
+        return True

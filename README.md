@@ -188,6 +188,62 @@ Global DRF auth includes:
 Not all endpoints accept both:
 - `/api/v1/keys/` is JWT-only by design (from code: `api_keys/views.py`).
 
+### Nextcloud Integration Security (HMAC)
+
+This repo supports Nextcloud → `weather-apis` server-to-server calls protected
+by an *additional* HMAC signing layer (request integrity + replay resistance).
+It does not replace JWT or API keys; it composes with them for endpoints that
+also require a user identity.
+
+Ping endpoint (HMAC-only, no JWT/API key):
+- GET `/api/v1/integrations/nextcloud/ping/`
+
+Required headers:
+- `X-NC-CLIENT-ID`
+- `X-NC-TIMESTAMP` (unix seconds)
+- `X-NC-NONCE` (unique per request)
+- `X-NC-SIGNATURE` (hex HMAC-SHA256 of the canonical string)
+
+Canonical string (newline-separated):
+`METHOD\nPATH\nCANONICAL_QUERY\nTIMESTAMP\nNONCE\nBODY_SHA256`
+
+Environment variables (from code: `config/settings.py`):
+- `NEXTCLOUD_HMAC_ENABLED` (default `True`)
+- `NEXTCLOUD_HMAC_MAX_SKEW_SECONDS` (default `300`)
+- `NEXTCLOUD_HMAC_NONCE_TTL_SECONDS` (default `300`)
+- `NEXTCLOUD_HMAC_CACHE_ALIAS` (default `default`)
+- `NEXTCLOUD_HMAC_CLIENTS_JSON` (JSON map of `client_id -> shared_secret`)
+
+Full contract, examples, and guidance for endpoint protection (v1/v2) live in
+`docs/security/nextcloud-hmac.md`.
+
+Minimal local signing example (placeholders only):
+
+```bash
+python - <<'PY'
+import hashlib, hmac
+
+secret = "<shared-secret>"
+method = "GET"
+path = "/api/v1/integrations/nextcloud/ping/"
+canonical_query = ""
+timestamp = 1700000000
+nonce = "<uuid>"
+body_sha256 = hashlib.sha256(b"").hexdigest()
+
+canonical = "\n".join([method, path, canonical_query, str(timestamp), nonce, body_sha256])
+print(hmac.new(secret.encode(), canonical.encode(), hashlib.sha256).hexdigest())
+PY
+```
+
+```bash
+curl -sS "http://localhost:8000/api/v1/integrations/nextcloud/ping/" \
+  -H "X-NC-CLIENT-ID: nc-dev-1" \
+  -H "X-NC-TIMESTAMP: 1700000000" \
+  -H "X-NC-NONCE: <uuid>" \
+  -H "X-NC-SIGNATURE: <hex>"
+```
+
 ### Password reset
 
 Endpoints:
