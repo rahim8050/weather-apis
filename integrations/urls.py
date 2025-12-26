@@ -9,6 +9,8 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     IntegrationClientViewSet,
     IntegrationPingView,
+    IntegrationTokenView,
+    IntegrationWhoAmIView,
     NextcloudPingView,
 )
 
@@ -31,4 +33,8 @@ urlpatterns = [
         name="nextcloud-ping",
     ),
     path("ping/", IntegrationPingView.as_view(), name="integration-ping"),
+    path("token/", IntegrationTokenView.as_view(), name="integration-token"),
+    path(
+        "whoami/", IntegrationWhoAmIView.as_view(), name="integration-whoami"
+    ),
 ] + router.urls

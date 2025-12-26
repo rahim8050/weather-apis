@@ -25,3 +25,7 @@ htmlcov/
 # logs
 logs/
 *.log
+
+# Local/generated artifacts
+cloc_no_migrations.txt
+ndvi/rasters/**

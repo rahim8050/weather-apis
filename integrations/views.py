@@ -1,7 +1,9 @@
 """Integration endpoints (e.g., Nextcloud).
 
 Authentication: endpoints may override global auth to support
-service-to-service integration flows. Global defaults remain JWT + API key.
+service-to-service integration flows. Bootstrap endpoints use API key + HMAC to
+mint short-lived integration JWTs; session endpoints may require JWT-only.
+Global defaults remain JWT + API key.
 
 Admin-only endpoints are provided for managing HMAC integration clients.
 
@@ -15,7 +17,7 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 
 from django.conf import settings
 from django.db import transaction
@@ -43,20 +45,26 @@ from config.api.openapi import (
 )
 from config.api.responses import JSONValue, error_response, success_response
 
+from .authentication import IntegrationJWTAuthentication
 from .hmac import (
     INTEGRATIONS_CLIENT_ID_HEADER,
+    INTEGRATIONS_NONCE_HEADER,
+    INTEGRATIONS_SIGNATURE_HEADER,
+    INTEGRATIONS_TIMESTAMP_HEADER,
     NEXTCLOUD_CLIENT_ID_HEADER,
     NEXTCLOUD_NONCE_HEADER,
     NEXTCLOUD_SIGNATURE_HEADER,
     NEXTCLOUD_TIMESTAMP_HEADER,
 )
 from .models import IntegrationClient
-from .permissions import NextcloudHMACPermission
+from .permissions import IntegrationHMACPermission, NextcloudHMACPermission
 from .serializers import (
     IntegrationClientCreateSerializer,
     IntegrationClientSerializer,
     IntegrationClientUpdateSerializer,
+    IntegrationTokenRequestSerializer,
 )
+from .tokens import mint_integration_access_token
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +97,36 @@ integration_ping_data_schema = inline_serializer(
 integration_ping_success_schema = success_envelope_serializer(
     "IntegrationPingSuccessResponse",
     data=integration_ping_data_schema,
+)
+
+integration_token_data_schema = inline_serializer(
+    name="IntegrationTokenData",
+    fields={
+        "access": serializers.CharField(),
+        "token_type": serializers.CharField(),
+        "expires_in": serializers.IntegerField(),
+    },
+)
+integration_token_success_schema = success_envelope_serializer(
+    "IntegrationTokenSuccessResponse",
+    data=integration_token_data_schema,
+)
+
+integration_whoami_data_schema = inline_serializer(
+    name="IntegrationWhoamiData",
+    fields={
+        "sub": serializers.CharField(),
+        "scope": serializers.CharField(),
+        "server_time": serializers.DateTimeField(),
+    },
+)
+integration_whoami_success_schema = success_envelope_serializer(
+    "IntegrationWhoamiSuccessResponse",
+    data=integration_whoami_data_schema,
+)
+
+integration_auth_error_schema = error_envelope_serializer(
+    "IntegrationAuthErrorResponse"
 )
 
 integration_client_create_data_schema = inline_serializer(
@@ -248,6 +286,125 @@ class IntegrationPingView(APIView):
             "server_time": timezone.now().isoformat(),
         }
         return success_response(data, message="pong")
+
+
+@extend_schema(auth=cast(list[str], [{"ApiKeyAuth": []}]))
+class IntegrationTokenView(APIView):
+    """Mint a short-lived integration JWT via API key + HMAC bootstrap.
+
+    Authentication: ApiKeyAuth (`X-API-Key`).
+    Permissions: IsAuthenticated + IntegrationHMACPermission.
+    Throttling: ApiKeyRateThrottle ("api_key").
+    Request body: none.
+    Response data: access token, token_type "Bearer", and expires_in seconds.
+    """
+
+    authentication_classes = (ApiKeyAuthentication,)
+    permission_classes = (IsAuthenticated, IntegrationHMACPermission)
+    throttle_classes = (ApiKeyRateThrottle,)
+
+    @extend_schema(
+        request=IntegrationTokenRequestSerializer,
+        parameters=[
+            OpenApiParameter(
+                name=INTEGRATIONS_CLIENT_ID_HEADER,
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.HEADER,
+                required=True,
+                description="Integration client identifier (UUID).",
+            ),
+            OpenApiParameter(
+                name=INTEGRATIONS_TIMESTAMP_HEADER,
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.HEADER,
+                required=True,
+                description="Unix timestamp (seconds).",
+            ),
+            OpenApiParameter(
+                name=INTEGRATIONS_NONCE_HEADER,
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.HEADER,
+                required=True,
+                description="Unique per-request nonce.",
+            ),
+            OpenApiParameter(
+                name=INTEGRATIONS_SIGNATURE_HEADER,
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.HEADER,
+                required=True,
+                description="Hex HMAC-SHA256 of canonical request string.",
+            ),
+        ],
+        responses={
+            200: integration_token_success_schema,
+            401: integration_auth_error_schema,
+            403: integration_auth_error_schema,
+        },
+    )
+    def post(self, request: Request) -> Response:
+        """Validate API key + HMAC headers, mint a JWT, and return it.
+
+        Inputs: `X-API-Key` plus HMAC headers (`X-Client-Id`, `X-Timestamp`,
+        `X-Nonce`, `X-Signature`).
+        Output: success envelope with `data.access`, `data.token_type`,
+        `data.expires_in`.
+        Side effects: stores the nonce in cache for replay protection.
+        """
+
+        serializer = IntegrationTokenRequestSerializer(data=request.data or {})
+        serializer.is_valid(raise_exception=True)
+
+        auth_obj = request.auth
+        client_id = str(getattr(auth_obj, "id", ""))
+        scope = str(getattr(auth_obj, "scope", ""))
+
+        access, expires_in = mint_integration_access_token(
+            client_id=client_id,
+            scope=scope,
+        )
+        data: dict[str, Any] = {
+            "access": access,
+            "token_type": "Bearer",
+            "expires_in": expires_in,
+        }
+        return success_response(data, message="Integration token issued")
+
+
+@extend_schema(auth=cast(list[str], [{"BearerAuth": []}]))
+class IntegrationWhoAmIView(APIView):
+    """Return the integration JWT identity claims.
+
+    Authentication: BearerAuth (integration JWT).
+    Permissions: IsAuthenticated.
+    Request body: none.
+    Response data: `sub`, `scope`, and `server_time`.
+    """
+
+    authentication_classes = (IntegrationJWTAuthentication,)
+    permission_classes = (IsAuthenticated,)
+
+    @extend_schema(
+        responses={
+            200: integration_whoami_success_schema,
+            401: integration_auth_error_schema,
+        }
+    )
+    def get(self, request: Request) -> Response:
+        """Return JWT claims and server time for the integration session.
+
+        Inputs: `Authorization: Bearer <integration_jwt>`.
+        Output: success envelope with `data.sub`, `data.scope`,
+        `data.server_time`.
+        Side effects: none.
+        """
+
+        auth_obj = cast(Any, request.auth)
+        data: dict[str, Any] = {
+            "sub": str(auth_obj.get("sub", "")),
+            "scope": str(auth_obj.get("scope", "")),
+            "server_time": timezone.now().isoformat(),
+        }
+        return success_response(data, message="Integration identity")
 
 
 class IntegrationClientViewSet(ModelViewSet):

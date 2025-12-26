@@ -307,8 +307,14 @@ SIMPLE_JWT = {
     "REFRESH_TOKEN_LIFETIME": timedelta(
         days=env.int("SIMPLE_JWT_REFRESH_DAYS", default=7)
     ),
+    "ISSUER": env("SIMPLE_JWT_ISSUER", default="weather-apis"),
+    "AUDIENCE": env("SIMPLE_JWT_AUDIENCE", default="nextcloud"),
 }
 
+INTEGRATION_JWT_ACCESS_MINUTES = env.int(
+    "INTEGRATION_JWT_ACCESS_MINUTES",
+    default=5,
+)
 
 DJANGO_API_KEY_PEPPER = env("DJANGO_API_KEY_PEPPER", default=None)
 

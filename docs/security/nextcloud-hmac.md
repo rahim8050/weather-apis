@@ -152,6 +152,38 @@ Success response (project envelope):
 Failure response:
 - `403 Forbidden` with a non-sensitive message like `"Invalid Nextcloud signature"`.
 
+### Integration token bootstrap (API key + HMAC)
+
+- `POST /api/v1/integration/token/`
+- Authentication: `X-API-Key` plus HMAC signature headers.
+- Required headers:
+  - `X-API-Key`: plaintext API key (service account)
+  - `X-Client-Id`: integration client UUID
+  - `X-Timestamp`: unix seconds (integer)
+  - `X-Nonce`: unique per request
+  - `X-Signature`: hex HMAC-SHA256 of the canonical string
+- Canonical string: same format as above.
+
+Success response (project envelope):
+
+```json
+{
+  "status": 0,
+  "message": "OK",
+  "data": {
+    "access": "<jwt>",
+    "token_type": "Bearer",
+    "expires_in": 300
+  },
+  "errors": null
+}
+```
+
+Environment variables (from code: `config/settings.py`):
+- `INTEGRATION_JWT_ACCESS_MINUTES` (default `5`)
+- `SIMPLE_JWT_ISSUER` (default `weather-apis`)
+- `SIMPLE_JWT_AUDIENCE` (default `nextcloud`)
+
 ## Integration clients + secret rotation
 
 Admin-only endpoints under `/api/v1/integrations/clients/` (also available under `/api/v1/integration/clients/`

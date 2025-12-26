@@ -23,6 +23,9 @@ NEXTCLOUD_TIMESTAMP_HEADER = "X-NC-TIMESTAMP"
 NEXTCLOUD_NONCE_HEADER = "X-NC-NONCE"
 NEXTCLOUD_SIGNATURE_HEADER = "X-NC-SIGNATURE"
 INTEGRATIONS_CLIENT_ID_HEADER = "X-Client-Id"
+INTEGRATIONS_TIMESTAMP_HEADER = "X-Timestamp"
+INTEGRATIONS_NONCE_HEADER = "X-Nonce"
+INTEGRATIONS_SIGNATURE_HEADER = "X-Signature"
 
 _RFC3986_SAFE = "-_.~"
 
@@ -110,8 +113,14 @@ def _get_required_headers(request: Request) -> NextcloudHMACHeaders:
     if not client_id:
         client_id = request.headers.get(INTEGRATIONS_CLIENT_ID_HEADER)
     timestamp_raw = request.headers.get(NEXTCLOUD_TIMESTAMP_HEADER)
+    if not timestamp_raw:
+        timestamp_raw = request.headers.get(INTEGRATIONS_TIMESTAMP_HEADER)
     nonce = request.headers.get(NEXTCLOUD_NONCE_HEADER)
+    if not nonce:
+        nonce = request.headers.get(INTEGRATIONS_NONCE_HEADER)
     signature = request.headers.get(NEXTCLOUD_SIGNATURE_HEADER)
+    if not signature:
+        signature = request.headers.get(INTEGRATIONS_SIGNATURE_HEADER)
 
     if not client_id or not timestamp_raw or not nonce or not signature:
         raise NextcloudHMACVerificationError("Missing Nextcloud HMAC headers")
@@ -131,7 +140,11 @@ def _get_required_headers(request: Request) -> NextcloudHMACHeaders:
     )
 
 
-def verify_nextcloud_hmac_request(request: Request) -> str:
+def verify_nextcloud_hmac_request(
+    request: Request,
+    *,
+    nonce_ttl_seconds: int | None = None,
+) -> str:
     """Verify request signature + replay protection; return `client_id`.
 
     Raises `NextcloudHMACVerificationError` on any verification failure.
@@ -228,7 +241,12 @@ def verify_nextcloud_hmac_request(request: Request) -> str:
     cache_alias = str(
         getattr(settings, "NEXTCLOUD_HMAC_CACHE_ALIAS", "default")
     )
-    nonce_ttl = int(getattr(settings, "NEXTCLOUD_HMAC_NONCE_TTL_SECONDS", 360))
+    if nonce_ttl_seconds is None:
+        nonce_ttl = int(
+            getattr(settings, "NEXTCLOUD_HMAC_NONCE_TTL_SECONDS", 360)
+        )
+    else:
+        nonce_ttl = int(nonce_ttl_seconds)
     cache = caches[cache_alias]
     cache_key = f"nc_hmac:{headers.client_id}:{headers.nonce}"
     if not cache.add(cache_key, 1, timeout=nonce_ttl):

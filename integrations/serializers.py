@@ -42,3 +42,7 @@ class IntegrationClientUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = IntegrationClient
         fields = ["name", "is_active"]
+
+
+class IntegrationTokenRequestSerializer(serializers.Serializer):
+    """Empty request serializer for integration token minting."""
