@@ -152,6 +152,25 @@ Success response (project envelope):
 Failure response:
 - `403 Forbidden` with a non-sensitive message like `"Invalid Nextcloud signature"`.
 
+## Integration clients + secret rotation
+
+Admin-only endpoints under `/api/v1/integrations/clients/` (also available under `/api/v1/integration/clients/`
+for backwards compatibility) let operators manage the UUID-based `X-Client-Id` records:
+
+- `POST /clients/` – create a client; response returns `{ "client_id": "<uuid>", "client_secret": "<secret>" }`
+  and the secret is shown only once. Store that secret in the Nextcloud instance configuration.
+- `GET /clients/` / `GET /clients/{id}/` – list or read client metadata; secrets (active or previous) are never exposed.
+- `PATCH /clients/{id}/` – update `name` and `is_active` to deactivate a client without rotating secrets.
+- `POST /clients/{id}/rotate-secret/` – rotate a client's secret, return the new secret once, and keep the previous secret valid
+  for `INTEGRATIONS_HMAC_PREVIOUS_TTL_SECONDS` seconds (default 72 hours).\`
+
+During rotation, the verifier accepts both the active and still-valid previous secret (overlap window) so deployments
+can roll credentials without breaking in-flight requests. When the overlap TTL expires, the previous secret is rejected
+and `NextcloudHMACPermission` logs the event (`integration_client.secret_rotated` + `nextcloud_hmac.verified_with_previous_secret`).
+
+Configure the overlap window with `INTEGRATIONS_HMAC_PREVIOUS_TTL_SECONDS`; choose a duration that covers your
+deployment's propagation time but keeps old secrets retired soon after.
+
 ## Composing HMAC with existing auth (Option B)
 
 ### v1 (service-account style): HMAC + JWT or API key

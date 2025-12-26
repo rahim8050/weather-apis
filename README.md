@@ -256,66 +256,11 @@ curl -sS "http://localhost:8000/api/v1/integrations/nextcloud/ping/" \
   -H "X-NC-SIGNATURE: <hex>"
 ```
 
-### Password reset
+### Integration Security
 
-Endpoints:
-- POST `/api/v1/auth/password/reset/`
-- POST `/api/v1/auth/password/reset/confirm/`
-
-Reset request (always returns 200 with a generic message):
-
-```bash
-curl -sS -X POST http://localhost:8000/api/v1/auth/password/reset/ \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"alice@example.com"}'
-```
-
-Response:
-
-```json
-{
-  "status": 0,
-  "message": "If an account exists for this email, a reset link has been sent.",
-  "data": null,
-  "errors": null
-}
-```
-
-Reset confirm:
-
-```bash
-curl -sS -X POST http://localhost:8000/api/v1/auth/password/reset/confirm/ \
-  -H 'Content-Type: application/json' \
-  -d '{"uid":"<uidb64>","token":"<token>","new_password":"StrongPass123!"}'
-```
-
-Success response:
-
-```json
-{
-  "status": 0,
-  "message": "Password has been reset.",
-  "data": null,
-  "errors": null
-}
-```
-
-Invalid/expired token response:
-
-```json
-{
-  "status": 1,
-  "message": "Invalid or expired reset link.",
-  "data": null,
-  "errors": { "token": ["Invalid or expired token."] }
-}
-```
-
-Required settings/env vars:
-- `FRONTEND_RESET_URL` (used to build `"<FRONTEND_RESET_URL>?uid=<uidb64>&token=<token>"`)
-- `DEFAULT_FROM_EMAIL`
-- `EMAIL_BACKEND`, `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`,
-  `EMAIL_HOST_PASSWORD`, `EMAIL_USE_TLS`, `EMAIL_USE_SSL`
+- HMAC spec: [docs/security/nextcloud-hmac.md](docs/security/nextcloud-hmac.md)
+- Operational runbook: [docs/security/nextcloud-hmac-runbook.md](docs/security/nextcloud-hmac-runbook.md)
+- Password reset: [docs/accounts/password-reset.md](docs/accounts/password-reset.md)
 
 ## Observability
 
