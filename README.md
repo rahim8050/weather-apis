@@ -178,6 +178,30 @@ Response conventions (from code: `config/api/responses.py`):
 - Some ViewSets (e.g., farms) return standard DRF serializer JSON (from code:
   `farms/views.py`).
 
+## Reverse proxy
+
+Serve the API behind a TLS-terminating reverse proxy and keep the `/api/v1/`
+paths stable. Reverse proxy headers, Django proxy-awareness settings, Nextcloud
+notes, and schema/docs blocking guidance live in
+`docs/reverse-proxy.md`.
+
+## Verification
+
+Example curl checks through the public proxy URL (confirm status and
+`Content-Type: application/json`):
+
+```bash
+curl -sS -D - -o /dev/null https://api.example.com/api/v1/integration/ping/
+curl -sS -D - -o /dev/null \
+  -H "X-API-Key: <api-key>" \
+  https://api.example.com/api/v1/integration/ping/
+```
+
+Checklist:
+- [ ] backend reachable
+- [ ] auth required where expected
+- [ ] `/api/v1/` endpoints respond through proxy
+
 ## Authentication
 
 Global DRF auth includes:
