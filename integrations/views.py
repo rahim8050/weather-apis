@@ -355,11 +355,11 @@ class IntegrationTokenView(APIView):
         serializer.is_valid(raise_exception=True)
 
         auth_obj = request.auth
-        client_id = str(getattr(auth_obj, "id", ""))
+        user_id = str(getattr(request.user, "pk", ""))
         scope = str(getattr(auth_obj, "scope", ""))
 
         access, expires_in = mint_integration_access_token(
-            client_id=client_id,
+            user_id=user_id,
             scope=scope,
         )
         data: dict[str, Any] = {
@@ -390,18 +390,46 @@ class IntegrationWhoAmIView(APIView):
         }
     )
     def get(self, request: Request) -> Response:
-        """Return JWT claims and server time for the integration session.
+        auth_obj: Any = getattr(request, "auth", None)
 
-        Inputs: `Authorization: Bearer <integration_jwt>`.
-        Output: success envelope with `data.sub`, `data.scope`,
-        `data.server_time`.
-        Side effects: none.
-        """
+        def claim(key: str) -> str:
+            # dict-like (your IntegrationJWTAuthentication could set this)
+            if isinstance(auth_obj, dict):
+                return str(auth_obj.get(key, "") or "")
+            if auth_obj is None:
+                return ""
+            getter = getattr(auth_obj, "get", None)
+            if callable(getter):
+                try:
+                    value = getter(key)
+                except Exception:
+                    value = None
+                else:
+                    if value is not None:
+                        return str(value or "")
+            # SimpleJWT Token objects support indexing: token["sub"]
+            try:
+                return str(auth_obj[key] or "")
+            except Exception:
+                return ""
 
-        auth_obj = cast(Any, request.auth)
-        data: dict[str, Any] = {
-            "sub": str(auth_obj.get("sub", "")),
-            "scope": str(auth_obj.get("scope", "")),
+        sub = (
+            claim("sub")
+            or claim("user_id")
+            or str(getattr(request.user, "id", ""))
+        )
+        scope = claim("scope")
+
+        # If scope isn't in the token, infer from authenticator
+        if not scope:
+            authn = getattr(request, "successful_authenticator", None)
+            scope = (
+                "api_key" if isinstance(authn, ApiKeyAuthentication) else "jwt"
+            )
+
+        data: dict[str, JSONValue] = {
+            "sub": sub,
+            "scope": scope,
             "server_time": timezone.now().isoformat(),
         }
         return success_response(data, message="Integration identity")

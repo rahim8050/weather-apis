@@ -1056,12 +1056,12 @@ paths:
     get:
       operationId: v1_integration_whoami_retrieve
       description: |-
-        Return JWT claims and server time for the integration session.
+        Return the integration JWT identity claims.
 
-        Inputs: `Authorization: Bearer <integration_jwt>`.
-        Output: success envelope with `data.sub`, `data.scope`,
-        `data.server_time`.
-        Side effects: none.
+        Authentication: BearerAuth (integration JWT).
+        Permissions: IsAuthenticated.
+        Request body: none.
+        Response data: `sub`, `scope`, and `server_time`.
       tags:
       - v1
       security:
@@ -1495,12 +1495,12 @@ paths:
     get:
       operationId: v1_integrations_whoami_retrieve
       description: |-
-        Return JWT claims and server time for the integration session.
+        Return the integration JWT identity claims.
 
-        Inputs: `Authorization: Bearer <integration_jwt>`.
-        Output: success envelope with `data.sub`, `data.scope`,
-        `data.server_time`.
-        Side effects: none.
+        Authentication: BearerAuth (integration JWT).
+        Permissions: IsAuthenticated.
+        Request body: none.
+        Response data: `sub`, `scope`, and `server_time`.
       tags:
       - v1
       security:

@@ -31,10 +31,10 @@ class IntegrationJWTAuthentication(JWTAuthentication):
     """Authenticate integration JWTs that carry `sub` and `scope` claims."""
 
     def get_user(self, validated_token: Token) -> TokenUser:  # type: ignore[override]
-        try:
-            validated_token["sub"]
-        except KeyError as exc:
-            raise InvalidToken("Token missing required subject claim") from exc
+        subject = validated_token.get("sub") or validated_token.get("user_id")
+        if not subject:
+            raise InvalidToken("Token missing required subject claim")
+        validated_token["sub"] = str(subject)
 
         if validated_token.get("scope") is None:
             raise InvalidToken("Token missing required scope claim")

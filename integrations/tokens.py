@@ -9,7 +9,7 @@ from rest_framework_simplejwt.tokens import AccessToken
 
 
 def mint_integration_access_token(
-    client_id: str,
+    user_id: str,
     scope: str,
 ) -> tuple[str, int]:
     """Mint an integration access token and return it with expiry seconds."""
@@ -21,8 +21,10 @@ def mint_integration_access_token(
 
     token = AccessToken()
     token.set_exp(lifetime=lifetime)
-    token["sub"] = client_id
-    token["scope"] = scope
+    subject = str(user_id)
+    token["user_id"] = subject
+    token["sub"] = subject
+    token["scope"] = scope or "read"
     token["iss"] = settings.SIMPLE_JWT["ISSUER"]
     token["aud"] = settings.SIMPLE_JWT["AUDIENCE"]
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import caches
 from django.utils.crypto import get_random_string
@@ -48,7 +49,9 @@ def _signature_for_request(
     )
 
 
-def _create_api_key(client: APIClient, scope: str = "read") -> tuple[str, str]:
+def _create_api_key(
+    client: APIClient, scope: str = "read"
+) -> tuple[str, str, str]:
     user = User.objects.create_user(
         username=get_random_string(12),
         password=get_random_string(32),
@@ -62,7 +65,7 @@ def _create_api_key(client: APIClient, scope: str = "read") -> tuple[str, str]:
     )
     assert resp.status_code in (200, 201), resp.content
     payload = resp.json()["data"]
-    return payload["api_key"], payload["id"]
+    return payload["api_key"], payload["id"], str(user.pk)
 
 
 def _hmac_headers(
@@ -86,7 +89,7 @@ def test_integration_token_mint_success() -> None:
     caches["throttle"].clear()
 
     client = APIClient()
-    api_key, key_id = _create_api_key(client)
+    api_key, key_id, user_id = _create_api_key(client)
     shared_secret = TEST_SHARED_SECRET
     integration_client = IntegrationClient.objects.create(
         name="Nextcloud",
@@ -130,6 +133,11 @@ def test_integration_token_mint_success() -> None:
     assert body["data"]["expires_in"] == 300
     assert isinstance(key_id, str)
 
+    token = AccessToken(body["data"]["access"])
+    assert token["sub"] == user_id
+    assert token["user_id"] == user_id
+    assert token["scope"] == "read"
+
 
 @pytest.mark.django_db
 def test_integration_token_invalid_signature_denied() -> None:
@@ -137,7 +145,7 @@ def test_integration_token_invalid_signature_denied() -> None:
     caches["throttle"].clear()
 
     client = APIClient()
-    api_key, _ = _create_api_key(client)
+    api_key, _, _ = _create_api_key(client)
     shared_secret = TEST_SHARED_SECRET
     integration_client = IntegrationClient.objects.create(
         name="Nextcloud",
@@ -171,7 +179,7 @@ def test_integration_token_missing_headers_denied() -> None:
     caches["throttle"].clear()
 
     client = APIClient()
-    api_key, _ = _create_api_key(client)
+    api_key, _, _ = _create_api_key(client)
 
     resp = client.post(
         "/api/v1/integration/token/",
@@ -190,7 +198,7 @@ def test_integration_token_replay_nonce_denied() -> None:
     caches["throttle"].clear()
 
     client = APIClient()
-    api_key, _ = _create_api_key(client)
+    api_key, _, _ = _create_api_key(client)
     shared_secret = TEST_SHARED_SECRET
     integration_client = IntegrationClient.objects.create(
         name="Nextcloud",
@@ -241,7 +249,7 @@ def test_integration_token_old_timestamp_denied() -> None:
     caches["throttle"].clear()
 
     client = APIClient()
-    api_key, _ = _create_api_key(client)
+    api_key, _, _ = _create_api_key(client)
     shared_secret = TEST_SHARED_SECRET
     integration_client = IntegrationClient.objects.create(
         name="Nextcloud",
@@ -285,7 +293,7 @@ def test_integration_token_allows_whoami() -> None:
     caches["throttle"].clear()
 
     client = APIClient()
-    api_key, key_id = _create_api_key(client)
+    api_key, _, user_id = _create_api_key(client)
     shared_secret = TEST_SHARED_SECRET
     integration_client = IntegrationClient.objects.create(
         name="Nextcloud",
@@ -327,7 +335,31 @@ def test_integration_token_allows_whoami() -> None:
     )
     assert whoami_resp.status_code == status.HTTP_200_OK, whoami_resp.content
     payload = whoami_resp.json()["data"]
-    assert payload["sub"] == key_id
+    assert payload["sub"] == user_id
+    assert payload["scope"] == "read"
+
+
+@pytest.mark.django_db
+def test_integration_token_accepts_user_id_without_sub() -> None:
+    client = APIClient()
+    user = User.objects.create_user(
+        username=get_random_string(12),
+        password=get_random_string(32),
+    )
+    token = AccessToken()
+    token["user_id"] = str(user.pk)
+    token["scope"] = "read"
+    token["iss"] = settings.SIMPLE_JWT["ISSUER"]
+    token["aud"] = settings.SIMPLE_JWT["AUDIENCE"]
+
+    resp = client.get(
+        "/api/v1/integration/whoami/",
+        HTTP_AUTHORIZATION=f"Bearer {str(token)}",
+    )
+
+    assert resp.status_code == status.HTTP_200_OK, resp.content
+    payload = resp.json()["data"]
+    assert payload["sub"] == str(user.pk)
     assert payload["scope"] == "read"
 
 
