@@ -22,6 +22,7 @@ from integrations.models import IntegrationClient
 
 User = get_user_model()
 TEST_SHARED_SECRET = "test-integration-secret"  # noqa: S105  # nosec B105
+TEST_UNKNOWN_SHARED_KEY = "test-unknown-key"
 BEARER_TOKEN_TYPE = "Bearer"  # noqa: S105  # nosec B105
 
 
@@ -171,6 +172,7 @@ def test_integration_token_invalid_signature_denied() -> None:
 
     assert resp.status_code == status.HTTP_403_FORBIDDEN
     assert resp.json()["status"] == 1
+    assert resp.json()["errors"]["code"] == "invalid_signature"
 
 
 @pytest.mark.django_db
@@ -190,6 +192,7 @@ def test_integration_token_missing_headers_denied() -> None:
 
     assert resp.status_code == status.HTTP_403_FORBIDDEN
     assert resp.json()["status"] == 1
+    assert resp.json()["errors"]["code"] == "missing_headers"
 
 
 @pytest.mark.django_db
@@ -241,6 +244,7 @@ def test_integration_token_replay_nonce_denied() -> None:
     assert first.status_code == status.HTTP_200_OK, first.content
     assert second.status_code == status.HTTP_403_FORBIDDEN, second.content
     assert second.json()["status"] == 1
+    assert second.json()["errors"]["code"] == "nonce_replay"
 
 
 @pytest.mark.django_db
@@ -285,6 +289,135 @@ def test_integration_token_old_timestamp_denied() -> None:
 
     assert resp.status_code == status.HTTP_403_FORBIDDEN
     assert resp.json()["status"] == 1
+    assert resp.json()["errors"]["code"] == "timestamp_too_old"
+
+
+@pytest.mark.django_db
+def test_integration_token_future_timestamp_denied() -> None:
+    caches["default"].clear()
+    caches["throttle"].clear()
+
+    client = APIClient()
+    api_key, _, _ = _create_api_key(client)
+    shared_secret = TEST_SHARED_SECRET
+    integration_client = IntegrationClient.objects.create(
+        name="Nextcloud",
+        secret=shared_secret,
+    )
+
+    now = 1_700_000_000
+    timestamp = now + 301
+    signature = _signature_for_request(
+        shared_secret=shared_secret,
+        method="POST",
+        path="/api/v1/integration/token/",
+        query_string="",
+        timestamp=timestamp,
+        nonce="nonce-future",
+        body=b"",
+    )
+    headers = _hmac_headers(
+        client_id=str(integration_client.client_id),
+        timestamp=timestamp,
+        nonce="nonce-future",
+        signature=signature,
+    )
+    headers["X-API-Key"] = api_key
+
+    with patch("integrations.hmac.time.time", return_value=now):
+        resp = client.post(
+            "/api/v1/integration/token/",
+            data=None,
+            content_type="application/json",
+            headers=headers,
+        )
+
+    assert resp.status_code == status.HTTP_403_FORBIDDEN
+    assert resp.json()["status"] == 1
+    assert resp.json()["errors"]["code"] == "timestamp_too_new"
+
+
+@pytest.mark.django_db
+def test_integration_token_unknown_client_denied() -> None:
+    caches["default"].clear()
+    caches["throttle"].clear()
+
+    client = APIClient()
+    api_key, _, _ = _create_api_key(client)
+
+    now = 1_700_000_000
+    signature = _signature_for_request(
+        shared_secret=TEST_UNKNOWN_SHARED_KEY,
+        method="POST",
+        path="/api/v1/integration/token/",
+        query_string="",
+        timestamp=now,
+        nonce="nonce-unknown",
+        body=b"",
+    )
+    headers = _hmac_headers(
+        client_id="00000000-0000-0000-0000-000000000000",
+        timestamp=now,
+        nonce="nonce-unknown",
+        signature=signature,
+    )
+    headers["X-API-Key"] = api_key
+
+    with patch("integrations.hmac.time.time", return_value=now):
+        resp = client.post(
+            "/api/v1/integration/token/",
+            data=None,
+            content_type="application/json",
+            headers=headers,
+        )
+
+    assert resp.status_code == status.HTTP_403_FORBIDDEN
+    assert resp.json()["status"] == 1
+    assert resp.json()["errors"]["code"] == "unknown_client_id"
+
+
+@pytest.mark.django_db
+def test_integration_token_tampered_body_denied() -> None:
+    caches["default"].clear()
+    caches["throttle"].clear()
+
+    client = APIClient()
+    api_key, _, _ = _create_api_key(client)
+    shared_secret = TEST_SHARED_SECRET
+    integration_client = IntegrationClient.objects.create(
+        name="Nextcloud",
+        secret=shared_secret,
+    )
+
+    now = 1_700_000_000
+    signature = _signature_for_request(
+        shared_secret=shared_secret,
+        method="POST",
+        path="/api/v1/integration/token/",
+        query_string="",
+        timestamp=now,
+        nonce="nonce-body",
+        body=b'{"a":1}',
+    )
+    headers = _hmac_headers(
+        client_id=str(integration_client.client_id),
+        timestamp=now,
+        nonce="nonce-body",
+        signature=signature,
+    )
+    headers["X-API-Key"] = api_key
+
+    with patch("integrations.hmac.time.time", return_value=now):
+        resp = client.post(
+            "/api/v1/integration/token/",
+            data=b'{"a":2}',
+            content_type="application/json",
+            headers=headers,
+        )
+
+    assert resp.status_code == status.HTTP_403_FORBIDDEN
+    assert resp.json()["status"] == 1
+    assert resp.json()["errors"]["code"] == "invalid_signature"
 
 
 @pytest.mark.django_db

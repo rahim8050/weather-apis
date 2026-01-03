@@ -45,6 +45,12 @@ class NextcloudHMACHeaders:
 class NextcloudHMACVerificationError(Exception):
     """Raised when a request fails Nextcloud HMAC verification."""
 
+    def __init__(
+        self, message: str, *, code: str = "invalid_signature"
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+
 
 def canonicalize_query(query_string: str) -> str:
     """Parse, sort, and re-encode a query string; preserve duplicates."""
@@ -123,13 +129,17 @@ def _get_required_headers(request: Request) -> NextcloudHMACHeaders:
         signature = request.headers.get(INTEGRATIONS_SIGNATURE_HEADER)
 
     if not client_id or not timestamp_raw or not nonce or not signature:
-        raise NextcloudHMACVerificationError("Missing Nextcloud HMAC headers")
+        raise NextcloudHMACVerificationError(
+            "Missing Nextcloud HMAC headers",
+            code="missing_headers",
+        )
 
     try:
         timestamp = int(timestamp_raw)
     except ValueError as exc:
         raise NextcloudHMACVerificationError(
-            "Invalid Nextcloud timestamp header"
+            "Invalid Nextcloud timestamp header",
+            code="invalid_timestamp",
         ) from exc
 
     return NextcloudHMACHeaders(
@@ -175,7 +185,8 @@ def verify_nextcloud_hmac_request(
         if integration_client is not None:
             if not integration_client.is_active:
                 raise NextcloudHMACVerificationError(
-                    "Integration client is disabled"
+                    "Integration client is disabled",
+                    code="client_disabled",
                 )
             secrets_to_try = list(integration_client.candidate_secrets())
 
@@ -185,19 +196,31 @@ def verify_nextcloud_hmac_request(
         )
         secret = clients.get(headers.client_id)
         if secret is None:
-            raise NextcloudHMACVerificationError("Unknown Nextcloud client_id")
+            raise NextcloudHMACVerificationError(
+                "Unknown Nextcloud client_id",
+                code="unknown_client_id",
+            )
         secrets_to_try = [secret]
 
     now = int(time.time())
     max_skew = int(getattr(settings, "NEXTCLOUD_HMAC_MAX_SKEW_SECONDS", 300))
-    if abs(now - headers.timestamp) > max_skew:
+    if headers.timestamp - now > max_skew:
         raise NextcloudHMACVerificationError(
-            "Nextcloud timestamp outside skew"
+            "Nextcloud timestamp too far in the future",
+            code="timestamp_too_new",
+        )
+    if now - headers.timestamp > max_skew:
+        raise NextcloudHMACVerificationError(
+            "Nextcloud timestamp too old",
+            code="timestamp_too_old",
         )
 
     method = request.method
     if not method:
-        raise NextcloudHMACVerificationError("Invalid request method")
+        raise NextcloudHMACVerificationError(
+            "Invalid request method",
+            code="invalid_method",
+        )
 
     canonical = build_canonical_string(
         method=method,
@@ -228,7 +251,10 @@ def verify_nextcloud_hmac_request(
                 matched_integration_client_previous_secret = idx > 0
                 break
         if not matched:
-            raise NextcloudHMACVerificationError("Invalid Nextcloud signature")
+            raise NextcloudHMACVerificationError(
+                "Invalid Nextcloud signature",
+                code="invalid_signature",
+            )
 
     if matched_integration_client_previous_secret:
         logger.info(
@@ -250,6 +276,9 @@ def verify_nextcloud_hmac_request(
     cache = caches[cache_alias]
     cache_key = f"nc_hmac:{headers.client_id}:{headers.nonce}"
     if not cache.add(cache_key, 1, timeout=nonce_ttl):
-        raise NextcloudHMACVerificationError("Nextcloud nonce replay detected")
+        raise NextcloudHMACVerificationError(
+            "Nextcloud nonce replay detected",
+            code="nonce_replay",
+        )
 
     return headers.client_id

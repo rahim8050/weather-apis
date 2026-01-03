@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Any, TypedDict, cast
 from unittest.mock import patch
 
+from django.conf import settings
 from django.core.cache import caches
 from django.test import SimpleTestCase
 from django.test.utils import override_settings
 from rest_framework import status
+from rest_framework.settings import api_settings
 from rest_framework.test import APITestCase
 
 from integrations.hmac import (
@@ -23,6 +25,11 @@ _KNOWN_GOOD_SIGNATURE = (
 )
 _EMPTY_BODY_SHA256 = (
     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+)
+
+_RF: dict[str, Any] = cast(dict[str, Any], settings.REST_FRAMEWORK)
+_RF_RATES: dict[str, str] = cast(
+    dict[str, str], _RF.get("DEFAULT_THROTTLE_RATES", {})
 )
 
 
@@ -141,6 +148,7 @@ class NextcloudHMACTests(APITestCase):
         resp = self.client.get(self.ping_url)
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(resp.json()["status"], 1)
+        self.assertEqual(resp.json()["errors"]["code"], "missing_headers")
 
     def test_unknown_client_id_denied(self) -> None:
         now = 1_700_000_000
@@ -156,6 +164,7 @@ class NextcloudHMACTests(APITestCase):
             )
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(resp.json()["status"], 1)
+        self.assertEqual(resp.json()["errors"]["code"], "unknown_client_id")
 
     def test_invalid_signature_denied(self) -> None:
         now = 1_700_000_000
@@ -171,6 +180,7 @@ class NextcloudHMACTests(APITestCase):
             )
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(resp.json()["status"], 1)
+        self.assertEqual(resp.json()["errors"]["code"], "invalid_signature")
 
     def test_valid_signature_returns_client_id(self) -> None:
         now = 1_700_000_000
@@ -247,6 +257,7 @@ class NextcloudHMACTests(APITestCase):
         self.assertEqual(first.status_code, status.HTTP_200_OK)
         self.assertEqual(second.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(second.json()["status"], 1)
+        self.assertEqual(second.json()["errors"]["code"], "nonce_replay")
 
     def test_old_timestamp_denied(self) -> None:
         now = 1_700_000_000
@@ -272,6 +283,33 @@ class NextcloudHMACTests(APITestCase):
             )
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(resp.json()["status"], 1)
+        self.assertEqual(resp.json()["errors"]["code"], "timestamp_too_old")
+
+    def test_future_timestamp_denied(self) -> None:
+        now = 1_700_000_000
+        timestamp = now + 301
+        nonce = "nonce-future"
+        signature = _signature_for_request(
+            shared_secret=_TEST_SIGNING_KEY,
+            method="GET",
+            path=self.ping_url,
+            query_string="",
+            timestamp=timestamp,
+            nonce=nonce,
+        )
+        with patch("integrations.hmac.time.time", return_value=now):
+            resp = self.client.get(
+                self.ping_url,
+                **self._headers(
+                    client_id="nc-test-1",
+                    timestamp=timestamp,
+                    nonce=nonce,
+                    signature=signature,
+                ),
+            )
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(resp.json()["status"], 1)
+        self.assertEqual(resp.json()["errors"]["code"], "timestamp_too_new")
 
     def test_canonical_query_ordering_validates(self) -> None:
         now = 1_700_000_000
@@ -296,3 +334,59 @@ class NextcloudHMACTests(APITestCase):
             )
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.json()["data"]["client_id"], "nc-test-1")
+
+    @override_settings(
+        REST_FRAMEWORK={
+            **_RF,
+            "DEFAULT_THROTTLE_RATES": {
+                **_RF_RATES,
+                "nextcloud_hmac": "1/min",
+            },
+        }
+    )
+    def test_rate_limit_returns_retry_after(self) -> None:
+        api_settings.reload()
+
+        now = 1_700_000_000
+        first_nonce = "nonce-throttle-1"
+        first_signature = _signature_for_request(
+            shared_secret=_TEST_SIGNING_KEY,
+            method="GET",
+            path=self.ping_url,
+            query_string="",
+            timestamp=now,
+            nonce=first_nonce,
+        )
+        first_headers = self._headers(
+            client_id="nc-test-1",
+            timestamp=now,
+            nonce=first_nonce,
+            signature=first_signature,
+        )
+        with patch("integrations.hmac.time.time", return_value=now):
+            first = self.client.get(self.ping_url, **first_headers)
+            second_nonce = "nonce-throttle-2"
+            second_signature = _signature_for_request(
+                shared_secret=_TEST_SIGNING_KEY,
+                method="GET",
+                path=self.ping_url,
+                query_string="",
+                timestamp=now,
+                nonce=second_nonce,
+            )
+            second_headers = self._headers(
+                client_id="nc-test-1",
+                timestamp=now,
+                nonce=second_nonce,
+                signature=second_signature,
+            )
+            second = self.client.get(self.ping_url, **second_headers)
+
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        self.assertEqual(second.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+        payload = second.json()
+        self.assertEqual(payload["status"], 1)
+        self.assertEqual(payload["message"], "Too Many Requests")
+        self.assertIn("wait", payload["errors"])
+        retry_after = second.get("Retry-After")
+        self.assertIsNotNone(retry_after)

@@ -18,6 +18,16 @@ from .hmac import NextcloudHMACVerificationError, verify_nextcloud_hmac_request
 INTEGRATION_HMAC_NONCE_TTL_SECONDS = 600
 
 
+def _permission_detail(
+    exc: NextcloudHMACVerificationError,
+) -> dict[str, str]:
+    return {
+        "detail": "Invalid Nextcloud signature",
+        "code": exc.code,
+        "reason": str(exc),
+    }
+
+
 class NextcloudHMACPermission(BasePermission):
     """Require a valid Nextcloud instance HMAC signature.
 
@@ -28,7 +38,7 @@ class NextcloudHMACPermission(BasePermission):
         try:
             client_id = verify_nextcloud_hmac_request(request)
         except NextcloudHMACVerificationError as exc:
-            raise PermissionDenied("Invalid Nextcloud signature") from exc
+            raise PermissionDenied(_permission_detail(exc)) from exc
 
         cast(Any, request).nc_hmac_client_id = client_id
         return True
@@ -47,7 +57,7 @@ class IntegrationHMACPermission(BasePermission):
                 nonce_ttl_seconds=INTEGRATION_HMAC_NONCE_TTL_SECONDS,
             )
         except NextcloudHMACVerificationError as exc:
-            raise PermissionDenied("Invalid Nextcloud signature") from exc
+            raise PermissionDenied(_permission_detail(exc)) from exc
 
         cast(Any, request).nc_hmac_client_id = client_id
         return True

@@ -290,6 +290,7 @@ REST_FRAMEWORK = {
         "password_reset": "5/min",
         "password_reset_confirm": "10/min",
         "api_key": env("API_KEY_THROTTLE_RATE", default="10/min"),
+        "nextcloud_hmac": env("API_KEY_THROTTLE_RATE", default="10/min"),
     },
     "EXCEPTION_HANDLER": "config.api.exceptions.custom_exception_handler",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",

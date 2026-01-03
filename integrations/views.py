@@ -33,6 +33,8 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
+from rest_framework.settings import api_settings
+from rest_framework.throttling import BaseThrottle
 from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
 from rest_framework_simplejwt.authentication import JWTAuthentication
@@ -64,9 +66,15 @@ from .serializers import (
     IntegrationClientUpdateSerializer,
     IntegrationTokenRequestSerializer,
 )
+from .throttling import NextcloudHMACRateThrottle
 from .tokens import mint_integration_access_token
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_THROTTLE_CLASSES: tuple[type[BaseThrottle], ...] = cast(
+    tuple[type[BaseThrottle], ...],
+    tuple(api_settings.DEFAULT_THROTTLE_CLASSES),
+)
 
 nextcloud_ping_data_schema = inline_serializer(
     name="NextcloudPingData",
@@ -186,12 +194,13 @@ class NextcloudPingView(APIView):
 
     Authentication: none (overrides global JWT/API key auth).
     Permissions: `NextcloudHMACPermission` only.
-    Throttling: global DRF throttles (anon/user/api_key/scoped).
+    Throttling: NextcloudHMACRateThrottle + global DRF throttles.
     Response data: `{"ok": true, "client_id": "<client_id>"}`.
     """
 
     authentication_classes = ()
     permission_classes = (NextcloudHMACPermission,)
+    throttle_classes = (NextcloudHMACRateThrottle,) + DEFAULT_THROTTLE_CLASSES
 
     @extend_schema(
         parameters=[
@@ -294,14 +303,14 @@ class IntegrationTokenView(APIView):
 
     Authentication: ApiKeyAuth (`X-API-Key`).
     Permissions: IsAuthenticated + IntegrationHMACPermission.
-    Throttling: ApiKeyRateThrottle ("api_key").
+    Throttling: ApiKeyRateThrottle ("api_key") + NextcloudHMACRateThrottle.
     Request body: none.
     Response data: access token, token_type "Bearer", and expires_in seconds.
     """
 
     authentication_classes = (ApiKeyAuthentication,)
     permission_classes = (IsAuthenticated, IntegrationHMACPermission)
-    throttle_classes = (ApiKeyRateThrottle,)
+    throttle_classes = (ApiKeyRateThrottle, NextcloudHMACRateThrottle)
 
     @extend_schema(
         request=IntegrationTokenRequestSerializer,
