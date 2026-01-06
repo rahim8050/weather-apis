@@ -13,14 +13,14 @@ User = get_user_model()
 @pytest.mark.django_db
 def test_integration_ping_requires_api_key() -> None:
     client = APIClient()
-    resp = client.get("/api/v1/integration/ping/")
+    resp = client.get("/api/v1/integrations/ping/")
     assert resp.status_code == 401
 
 
 @pytest.mark.django_db
 def test_integration_ping_requires_api_key_returns_401() -> None:
     client = APIClient()
-    resp = client.get("/api/v1/integration/ping/")
+    resp = client.get("/api/v1/integrations/ping/")
     assert resp.status_code == 401
 
 
@@ -57,5 +57,8 @@ def test_integration_ping_succeeds_with_api_key() -> None:
     api_key = payload["data"]["api_key"]
     assert api_key.startswith("wk_live_")
 
-    ping_resp = client.get("/api/v1/integration/ping/", HTTP_X_API_KEY=api_key)
+    ping_resp = client.get(
+        "/api/v1/integrations/ping/",
+        HTTP_X_API_KEY=api_key,
+    )
     assert ping_resp.status_code == 200, ping_resp.content

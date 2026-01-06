@@ -191,16 +191,19 @@ Example curl checks through the public proxy URL (confirm status and
 `Content-Type: application/json`):
 
 ```bash
-curl -sS -D - -o /dev/null https://api.example.com/api/v1/integration/ping/
+curl -sS -D - -o /dev/null https://api.example.com/api/v1/integrations/ping/
 curl -sS -D - -o /dev/null \
   -H "X-API-Key: <api-key>" \
-  https://api.example.com/api/v1/integration/ping/
+  https://api.example.com/api/v1/integrations/ping/
 ```
 
 Checklist:
 - [ ] backend reachable
 - [ ] auth required where expected
 - [ ] `/api/v1/` endpoints respond through proxy
+
+Legacy aliases under `/api/v1/integration/` remain available but are
+deprecated.
 
 ## Authentication
 

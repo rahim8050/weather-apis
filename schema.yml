@@ -372,10 +372,7 @@ paths:
                 format: binary
           description: ''
         '304':
-          content:
-            application/json:
-              schema: null
-          description: ''
+          description: Not Modified
         '404':
           content:
             application/json:
@@ -640,445 +637,6 @@ paths:
       responses:
         '204':
           description: No response body
-  /api/v1/integration/clients/:
-    get:
-      operationId: v1_integration_clients_list
-      description: List IntegrationClients (no secret fields).
-      tags:
-      - v1
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/IntegrationClientListSuccessResponse'
-          description: ''
-        '401':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationClientErrorResponse'
-          description: ''
-        '403':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationClientErrorResponse'
-          description: ''
-    post:
-      operationId: v1_integration_clients_create
-      description: Create an IntegrationClient and return its secret once.
-      tags:
-      - v1
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/IntegrationClientCreate'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/IntegrationClientCreate'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/IntegrationClientCreate'
-        required: true
-      security:
-      - jwtAuth: []
-      responses:
-        '201':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationClientCreateSuccessResponse'
-          description: ''
-        '400':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationClientErrorResponse'
-          description: ''
-        '401':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationClientErrorResponse'
-          description: ''
-        '403':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationClientErrorResponse'
-          description: ''
-  /api/v1/integration/clients/{id}/:
-    get:
-      operationId: v1_integration_clients_retrieve
-      description: Retrieve an IntegrationClient (no secret fields).
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this integration client.
-        required: true
-      tags:
-      - v1
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationClientRetrieveSuccessResponse'
-          description: ''
-        '401':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationClientErrorResponse'
-          description: ''
-        '403':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationClientErrorResponse'
-          description: ''
-        '404':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationClientErrorResponse'
-          description: ''
-    patch:
-      operationId: v1_integration_clients_partial_update
-      description: Update `name`/`is_active` (secrets cannot be changed here).
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this integration client.
-        required: true
-      tags:
-      - v1
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PatchedIntegrationClientUpdate'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/PatchedIntegrationClientUpdate'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/PatchedIntegrationClientUpdate'
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationClientUpdateSuccessResponse'
-          description: ''
-        '400':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationClientErrorResponse'
-          description: ''
-        '401':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationClientErrorResponse'
-          description: ''
-        '403':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationClientErrorResponse'
-          description: ''
-        '404':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationClientErrorResponse'
-          description: ''
-  /api/v1/integration/clients/{id}/rotate-secret/:
-    post:
-      operationId: v1_integration_clients_rotate_secret_create
-      description: Rotate the client's secret and return the new secret once.
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this integration client.
-        required: true
-      tags:
-      - v1
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationClientRotateSecretSuccessResponse'
-          description: ''
-        '401':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationClientErrorResponse'
-          description: ''
-        '403':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationClientErrorResponse'
-          description: ''
-        '404':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationClientErrorResponse'
-          description: ''
-        '409':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationClientConflictResponse'
-          description: ''
-  /api/v1/integration/integrations/nextcloud/ping/:
-    get:
-      operationId: v1_integration_integrations_nextcloud_ping_retrieve
-      description: |-
-        Return `ok` + verified `client_id` if HMAC validation succeeds.
-
-        Inputs: signature headers (X-Client-Id or X-NC-CLIENT-ID,
-        X-NC-TIMESTAMP, X-NC-NONCE, X-NC-SIGNATURE).
-        Output: success envelope with `data.ok` and `data.client_id`.
-        Side effects: stores the nonce in the configured cache for replay
-        protection.
-      parameters:
-      - in: header
-        name: X-Client-Id
-        schema:
-          type: string
-        description: Integration client identifier (UUID).
-        required: true
-      - in: header
-        name: X-NC-CLIENT-ID
-        schema:
-          type: string
-        description: Deprecated alias for X-Client-Id.
-        deprecated: true
-      - in: header
-        name: X-NC-NONCE
-        schema:
-          type: string
-        description: Unique per-request nonce.
-        required: true
-      - in: header
-        name: X-NC-SIGNATURE
-        schema:
-          type: string
-        description: Hex HMAC-SHA256 of canonical request string.
-        required: true
-      - in: header
-        name: X-NC-TIMESTAMP
-        schema:
-          type: integer
-        description: Unix timestamp (seconds).
-        required: true
-      tags:
-      - v1
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/NextcloudPingSuccessResponse'
-          description: ''
-        '403':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/NextcloudPingErrorResponse'
-          description: ''
-  /api/v1/integration/nextcloud/ping/:
-    get:
-      operationId: v1_integration_nextcloud_ping_retrieve
-      description: |-
-        Return `ok` + verified `client_id` if HMAC validation succeeds.
-
-        Inputs: signature headers (X-Client-Id or X-NC-CLIENT-ID,
-        X-NC-TIMESTAMP, X-NC-NONCE, X-NC-SIGNATURE).
-        Output: success envelope with `data.ok` and `data.client_id`.
-        Side effects: stores the nonce in the configured cache for replay
-        protection.
-      parameters:
-      - in: header
-        name: X-Client-Id
-        schema:
-          type: string
-        description: Integration client identifier (UUID).
-        required: true
-      - in: header
-        name: X-NC-CLIENT-ID
-        schema:
-          type: string
-        description: Deprecated alias for X-Client-Id.
-        deprecated: true
-      - in: header
-        name: X-NC-NONCE
-        schema:
-          type: string
-        description: Unique per-request nonce.
-        required: true
-      - in: header
-        name: X-NC-SIGNATURE
-        schema:
-          type: string
-        description: Hex HMAC-SHA256 of canonical request string.
-        required: true
-      - in: header
-        name: X-NC-TIMESTAMP
-        schema:
-          type: integer
-        description: Unix timestamp (seconds).
-        required: true
-      tags:
-      - v1
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/NextcloudPingSuccessResponse'
-          description: ''
-        '403':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/NextcloudPingErrorResponse'
-          description: ''
-  /api/v1/integration/ping/:
-    get:
-      operationId: v1_integration_ping_retrieve
-      description: Return `pong` with API key-authenticated metadata.
-      tags:
-      - v1
-      security:
-      - ApiKeyAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationPingSuccessResponse'
-          description: ''
-        '401':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationClientErrorResponse'
-          description: ''
-  /api/v1/integration/token/:
-    post:
-      operationId: v1_integration_token_create
-      description: |-
-        Validate API key + HMAC headers, mint a JWT, and return it.
-
-        Inputs: `X-API-Key` plus HMAC headers (`X-Client-Id`, `X-Timestamp`,
-        `X-Nonce`, `X-Signature`).
-        Output: success envelope with `data.access`, `data.token_type`,
-        `data.expires_in`.
-        Side effects: stores the nonce in cache for replay protection.
-      parameters:
-      - in: header
-        name: X-Client-Id
-        schema:
-          type: string
-        description: Integration client identifier (UUID).
-        required: true
-      - in: header
-        name: X-Nonce
-        schema:
-          type: string
-        description: Unique per-request nonce.
-        required: true
-      - in: header
-        name: X-Signature
-        schema:
-          type: string
-        description: Hex HMAC-SHA256 of canonical request string.
-        required: true
-      - in: header
-        name: X-Timestamp
-        schema:
-          type: integer
-        description: Unix timestamp (seconds).
-        required: true
-      tags:
-      - v1
-      security:
-      - ApiKeyAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationTokenSuccessResponse'
-          description: ''
-        '401':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationAuthErrorResponse'
-          description: ''
-        '403':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationAuthErrorResponse'
-          description: ''
-  /api/v1/integration/whoami/:
-    get:
-      operationId: v1_integration_whoami_retrieve
-      description: |-
-        Return the integration JWT identity claims.
-
-        Authentication: BearerAuth (integration JWT).
-        Permissions: IsAuthenticated.
-        Request body: none.
-        Response data: `sub`, `scope`, and `server_time`.
-      tags:
-      - v1
-      security:
-      - BearerAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationWhoamiSuccessResponse'
-          description: ''
-        '401':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IntegrationAuthErrorResponse'
-          description: ''
   /api/v1/integrations/clients/:
     get:
       operationId: v1_integrations_clients_list
@@ -1296,63 +854,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/IntegrationClientConflictResponse'
-          description: ''
-  /api/v1/integrations/integrations/nextcloud/ping/:
-    get:
-      operationId: v1_integrations_integrations_nextcloud_ping_retrieve
-      description: |-
-        Return `ok` + verified `client_id` if HMAC validation succeeds.
-
-        Inputs: signature headers (X-Client-Id or X-NC-CLIENT-ID,
-        X-NC-TIMESTAMP, X-NC-NONCE, X-NC-SIGNATURE).
-        Output: success envelope with `data.ok` and `data.client_id`.
-        Side effects: stores the nonce in the configured cache for replay
-        protection.
-      parameters:
-      - in: header
-        name: X-Client-Id
-        schema:
-          type: string
-        description: Integration client identifier (UUID).
-        required: true
-      - in: header
-        name: X-NC-CLIENT-ID
-        schema:
-          type: string
-        description: Deprecated alias for X-Client-Id.
-        deprecated: true
-      - in: header
-        name: X-NC-NONCE
-        schema:
-          type: string
-        description: Unique per-request nonce.
-        required: true
-      - in: header
-        name: X-NC-SIGNATURE
-        schema:
-          type: string
-        description: Hex HMAC-SHA256 of canonical request string.
-        required: true
-      - in: header
-        name: X-NC-TIMESTAMP
-        schema:
-          type: integer
-        description: Unix timestamp (seconds).
-        required: true
-      tags:
-      - v1
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/NextcloudPingSuccessResponse'
-          description: ''
-        '403':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/NextcloudPingErrorResponse'
           description: ''
   /api/v1/integrations/nextcloud/ping/:
     get:
@@ -1919,7 +1420,16 @@ components:
           type: string
           maxLength: 128
         scope:
-          $ref: '#/components/schemas/ApiKeyScopeEnum'
+          enum:
+          - read
+          - write
+          - admin
+          type: string
+          description: |-
+            * `read` - Read
+            * `write` - Write
+            * `admin` - Admin
+          x-spec-enum-id: 7b9ee2fe711652dc
         prefix:
           type: string
           readOnly: true
@@ -1967,8 +1477,16 @@ components:
           type: string
           readOnly: true
         scope:
-          allOf:
-          - $ref: '#/components/schemas/ApiKeyScopeEnum'
+          enum:
+          - read
+          - write
+          - admin
+          type: string
+          description: |-
+            * `read` - Read
+            * `write` - Write
+            * `admin` - Admin
+          x-spec-enum-id: 7b9ee2fe711652dc
           readOnly: true
         prefix:
           type: string
@@ -2042,7 +1560,16 @@ components:
         name:
           type: string
         scope:
-          $ref: '#/components/schemas/ApiKeyScopeValueEnum'
+          enum:
+          - read
+          - write
+          - admin
+          type: string
+          description: |-
+            * `read` - read
+            * `write` - write
+            * `admin` - admin
+          x-spec-enum-id: 4f9d93526e2614fd
         prefix:
           type: string
         last4:
@@ -2087,26 +1614,6 @@ components:
       - errors
       - message
       - status
-    ApiKeyScopeEnum:
-      enum:
-      - read
-      - write
-      - admin
-      type: string
-      description: |-
-        * `read` - Read
-        * `write` - Write
-        * `admin` - Admin
-    ApiKeyScopeValueEnum:
-      enum:
-      - read
-      - write
-      - admin
-      type: string
-      description: |-
-        * `read` - read
-        * `write` - write
-        * `admin` - admin
     ApiKeysErrorResponse:
       type: object
       properties:
@@ -2588,18 +2095,6 @@ components:
       - errors
       - message
       - status
-    JobTypeEnum:
-      enum:
-      - refresh_latest
-      - gap_fill
-      - backfill
-      - raster_png
-      type: string
-      description: |-
-        * `refresh_latest` - Refresh latest
-        * `gap_fill` - Gap fill
-        * `backfill` - Backfill
-        * `raster_png` - Raster PNG
     Login:
       type: object
       properties:
@@ -2670,12 +2165,32 @@ components:
           type: integer
           readOnly: true
         job_type:
-          allOf:
-          - $ref: '#/components/schemas/JobTypeEnum'
+          enum:
+          - refresh_latest
+          - gap_fill
+          - backfill
+          - raster_png
+          type: string
+          description: |-
+            * `refresh_latest` - Refresh latest
+            * `gap_fill` - Gap fill
+            * `backfill` - Backfill
+            * `raster_png` - Raster PNG
+          x-spec-enum-id: 15b09757c72f538e
           readOnly: true
         status:
-          allOf:
-          - $ref: '#/components/schemas/StatusEnum'
+          enum:
+          - queued
+          - running
+          - success
+          - failed
+          type: string
+          description: |-
+            * `queued` - Queued
+            * `running` - Running
+            * `success` - Success
+            * `failed` - Failed
+          x-spec-enum-id: d0d44a2f00e8c638
           readOnly: true
         start:
           type: string
@@ -3062,7 +2577,16 @@ components:
           type: string
           maxLength: 128
         scope:
-          $ref: '#/components/schemas/ApiKeyScopeEnum'
+          enum:
+          - read
+          - write
+          - admin
+          type: string
+          description: |-
+            * `read` - Read
+            * `write` - Write
+            * `admin` - Admin
+          x-spec-enum-id: 7b9ee2fe711652dc
         prefix:
           type: string
           readOnly: true
@@ -3178,18 +2702,6 @@ components:
       - password
       - password2
       - username
-    StatusEnum:
-      enum:
-      - queued
-      - running
-      - success
-      - failed
-      type: string
-      description: |-
-        * `queued` - Queued
-        * `running` - Running
-        * `success` - Success
-        * `failed` - Failed
     TokenRefresh:
       type: object
       properties:

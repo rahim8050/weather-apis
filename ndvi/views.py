@@ -18,6 +18,7 @@ from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import (
     OpenApiParameter,
+    OpenApiResponse,
     OpenApiTypes,
     extend_schema,
     inline_serializer,
@@ -384,7 +385,7 @@ class NdviRasterPngView(BaseFarmView):
         parameters=raster_query_params,
         responses={
             200: OpenApiTypes.BINARY,
-            304: OpenApiTypes.NONE,
+            304: OpenApiResponse(response=None, description="Not Modified"),
             404: ndvi_error_response,
         },
     )

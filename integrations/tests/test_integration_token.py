@@ -99,7 +99,7 @@ def test_integration_token_mint_success() -> None:
 
     now = 1_700_000_000
     nonce = "nonce-1"
-    path = "/api/v1/integration/token/"
+    path = "/api/v1/integrations/token/"
     signature = _signature_for_request(
         shared_secret=shared_secret,
         method="POST",
@@ -164,7 +164,7 @@ def test_integration_token_invalid_signature_denied() -> None:
 
     with patch("integrations.hmac.time.time", return_value=now):
         resp = client.post(
-            "/api/v1/integration/token/",
+            "/api/v1/integrations/token/",
             data=None,
             content_type="application/json",
             headers=headers,
@@ -184,7 +184,7 @@ def test_integration_token_missing_headers_denied() -> None:
     api_key, _, _ = _create_api_key(client)
 
     resp = client.post(
-        "/api/v1/integration/token/",
+        "/api/v1/integrations/token/",
         data=None,
         content_type="application/json",
         headers={"X-API-Key": api_key},
@@ -193,6 +193,98 @@ def test_integration_token_missing_headers_denied() -> None:
     assert resp.status_code == status.HTTP_403_FORBIDDEN
     assert resp.json()["status"] == 1
     assert resp.json()["errors"]["code"] == "missing_headers"
+
+
+@pytest.mark.django_db
+def test_integration_token_requires_api_key() -> None:
+    caches["default"].clear()
+    caches["throttle"].clear()
+
+    client = APIClient()
+    shared_secret = TEST_SHARED_SECRET
+    integration_client = IntegrationClient.objects.create(
+        name="Nextcloud",
+        secret=shared_secret,
+    )
+
+    now = 1_700_000_000
+    nonce = "nonce-no-key"
+    path = "/api/v1/integrations/token/"
+    signature = _signature_for_request(
+        shared_secret=shared_secret,
+        method="POST",
+        path=path,
+        query_string="",
+        timestamp=now,
+        nonce=nonce,
+        body=b"",
+    )
+    headers = _hmac_headers(
+        client_id=str(integration_client.client_id),
+        timestamp=now,
+        nonce=nonce,
+        signature=signature,
+    )
+
+    with patch("integrations.hmac.time.time", return_value=now):
+        resp = client.post(
+            path,
+            data=None,
+            content_type="application/json",
+            headers=headers,
+        )
+
+    assert resp.status_code == status.HTTP_401_UNAUTHORIZED
+    assert resp.json()["status"] == 1
+    assert (
+        resp.json()["errors"]["detail"]
+        == "Authentication credentials were not provided."
+    )
+
+
+@pytest.mark.django_db
+def test_integration_token_invalid_api_key_denied() -> None:
+    caches["default"].clear()
+    caches["throttle"].clear()
+
+    client = APIClient()
+    shared_secret = TEST_SHARED_SECRET
+    integration_client = IntegrationClient.objects.create(
+        name="Nextcloud",
+        secret=shared_secret,
+    )
+
+    now = 1_700_000_000
+    nonce = "nonce-bad-key"
+    path = "/api/v1/integrations/token/"
+    signature = _signature_for_request(
+        shared_secret=shared_secret,
+        method="POST",
+        path=path,
+        query_string="",
+        timestamp=now,
+        nonce=nonce,
+        body=b"",
+    )
+    headers = _hmac_headers(
+        client_id=str(integration_client.client_id),
+        timestamp=now,
+        nonce=nonce,
+        signature=signature,
+    )
+    headers["X-API-Key"] = "wk_live_invalid"
+
+    with patch("integrations.hmac.time.time", return_value=now):
+        resp = client.post(
+            path,
+            data=None,
+            content_type="application/json",
+            headers=headers,
+        )
+
+    assert resp.status_code == status.HTTP_401_UNAUTHORIZED
+    assert resp.json()["status"] == 1
+    assert resp.json()["message"] == "Invalid or expired API key."
 
 
 @pytest.mark.django_db
@@ -213,7 +305,7 @@ def test_integration_token_replay_nonce_denied() -> None:
     signature = _signature_for_request(
         shared_secret=shared_secret,
         method="POST",
-        path="/api/v1/integration/token/",
+        path="/api/v1/integrations/token/",
         query_string="",
         timestamp=now,
         nonce=nonce,
@@ -229,13 +321,13 @@ def test_integration_token_replay_nonce_denied() -> None:
 
     with patch("integrations.hmac.time.time", return_value=now):
         first = client.post(
-            "/api/v1/integration/token/",
+            "/api/v1/integrations/token/",
             data=None,
             content_type="application/json",
             headers=headers,
         )
         second = client.post(
-            "/api/v1/integration/token/",
+            "/api/v1/integrations/token/",
             data=None,
             content_type="application/json",
             headers=headers,
@@ -265,7 +357,7 @@ def test_integration_token_old_timestamp_denied() -> None:
     signature = _signature_for_request(
         shared_secret=shared_secret,
         method="POST",
-        path="/api/v1/integration/token/",
+        path="/api/v1/integrations/token/",
         query_string="",
         timestamp=timestamp,
         nonce="nonce-old",
@@ -281,7 +373,7 @@ def test_integration_token_old_timestamp_denied() -> None:
 
     with patch("integrations.hmac.time.time", return_value=now):
         resp = client.post(
-            "/api/v1/integration/token/",
+            "/api/v1/integrations/token/",
             data=None,
             content_type="application/json",
             headers=headers,
@@ -310,7 +402,7 @@ def test_integration_token_future_timestamp_denied() -> None:
     signature = _signature_for_request(
         shared_secret=shared_secret,
         method="POST",
-        path="/api/v1/integration/token/",
+        path="/api/v1/integrations/token/",
         query_string="",
         timestamp=timestamp,
         nonce="nonce-future",
@@ -326,7 +418,7 @@ def test_integration_token_future_timestamp_denied() -> None:
 
     with patch("integrations.hmac.time.time", return_value=now):
         resp = client.post(
-            "/api/v1/integration/token/",
+            "/api/v1/integrations/token/",
             data=None,
             content_type="application/json",
             headers=headers,
@@ -349,7 +441,7 @@ def test_integration_token_unknown_client_denied() -> None:
     signature = _signature_for_request(
         shared_secret=TEST_UNKNOWN_SHARED_KEY,
         method="POST",
-        path="/api/v1/integration/token/",
+        path="/api/v1/integrations/token/",
         query_string="",
         timestamp=now,
         nonce="nonce-unknown",
@@ -365,7 +457,7 @@ def test_integration_token_unknown_client_denied() -> None:
 
     with patch("integrations.hmac.time.time", return_value=now):
         resp = client.post(
-            "/api/v1/integration/token/",
+            "/api/v1/integrations/token/",
             data=None,
             content_type="application/json",
             headers=headers,
@@ -393,7 +485,7 @@ def test_integration_token_tampered_body_denied() -> None:
     signature = _signature_for_request(
         shared_secret=shared_secret,
         method="POST",
-        path="/api/v1/integration/token/",
+        path="/api/v1/integrations/token/",
         query_string="",
         timestamp=now,
         nonce="nonce-body",
@@ -409,7 +501,7 @@ def test_integration_token_tampered_body_denied() -> None:
 
     with patch("integrations.hmac.time.time", return_value=now):
         resp = client.post(
-            "/api/v1/integration/token/",
+            "/api/v1/integrations/token/",
             data=b'{"a":2}',
             content_type="application/json",
             headers=headers,
@@ -438,7 +530,7 @@ def test_integration_token_allows_whoami() -> None:
     signature = _signature_for_request(
         shared_secret=shared_secret,
         method="POST",
-        path="/api/v1/integration/token/",
+        path="/api/v1/integrations/token/",
         query_string="",
         timestamp=now,
         nonce=nonce,
@@ -454,7 +546,7 @@ def test_integration_token_allows_whoami() -> None:
 
     with patch("integrations.hmac.time.time", return_value=now):
         token_resp = client.post(
-            "/api/v1/integration/token/",
+            "/api/v1/integrations/token/",
             data=None,
             content_type="application/json",
             headers=headers,
@@ -463,7 +555,7 @@ def test_integration_token_allows_whoami() -> None:
     access = token_resp.json()["data"]["access"]
 
     whoami_resp = client.get(
-        "/api/v1/integration/whoami/",
+        "/api/v1/integrations/whoami/",
         HTTP_AUTHORIZATION=f"Bearer {access}",
     )
     assert whoami_resp.status_code == status.HTTP_200_OK, whoami_resp.content
@@ -486,7 +578,7 @@ def test_integration_token_accepts_user_id_without_sub() -> None:
     token["aud"] = settings.SIMPLE_JWT["AUDIENCE"]
 
     resp = client.get(
-        "/api/v1/integration/whoami/",
+        "/api/v1/integrations/whoami/",
         HTTP_AUTHORIZATION=f"Bearer {str(token)}",
     )
 
@@ -516,7 +608,7 @@ def test_integration_token_wrong_audience_or_issuer_denied() -> None:
     token_str = backend.encode(bad_token.payload)
 
     resp = client.get(
-        "/api/v1/integration/whoami/",
+        "/api/v1/integrations/whoami/",
         HTTP_AUTHORIZATION=f"Bearer {token_str}",
     )
 

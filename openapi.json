@@ -1,0 +1,4252 @@
+{
+    "openapi": "3.0.3",
+    "info": {
+        "title": "Weather APIs",
+        "version": "1.0.0",
+        "description": "REST API for user authentication and API key lifecycle management."
+    },
+    "paths": {
+        "/api/v1/auth/login/": {
+            "post": {
+                "operationId": "v1_auth_login_create",
+                "description": "Validate credentials and return access/refresh tokens.",
+                "tags": [
+                    "v1"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Login"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Login"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Login"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthSuccessResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/me/": {
+            "get": {
+                "operationId": "v1_auth_me_retrieve",
+                "description": "Return the currently authenticated user's profile.",
+                "tags": [
+                    "v1"
+                ],
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/MeSuccessResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/password/change/": {
+            "post": {
+                "operationId": "v1_auth_password_change_create",
+                "description": "Validate the old password and set the new password.",
+                "tags": [
+                    "v1"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/PasswordChange"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/PasswordChange"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/PasswordChange"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PasswordChangeSuccessResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/password/reset/": {
+            "post": {
+                "operationId": "v1_auth_password_reset_create",
+                "description": "Inputs: email. Output: success envelope with data null.\n\nSide effects: sends a reset email for active users when configured.",
+                "tags": [
+                    "v1"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/PasswordResetRequest"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/PasswordResetRequest"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/PasswordResetRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PasswordResetRequestSuccessResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PasswordResetErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/password/reset/confirm/": {
+            "post": {
+                "operationId": "v1_auth_password_reset_confirm_create",
+                "description": "Inputs: uid, token, new_password. Output: envelope with data null.\n\nSide effects: updates the user's password on success.",
+                "tags": [
+                    "v1"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/PasswordResetConfirm"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/PasswordResetConfirm"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/PasswordResetConfirm"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PasswordResetConfirmSuccessResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PasswordResetErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/register/": {
+            "post": {
+                "operationId": "v1_auth_register_create",
+                "description": "Register the user and return access/refresh tokens.",
+                "tags": [
+                    "v1"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Register"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Register"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Register"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "201": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthSuccessResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/token/refresh/": {
+            "post": {
+                "operationId": "v1_auth_token_refresh_create",
+                "description": "Validate refresh token and return a new access token.",
+                "tags": [
+                    "v1"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/TokenRefresh"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/TokenRefresh"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/TokenRefresh"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/TokenRefreshSuccessResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/farms/": {
+            "get": {
+                "operationId": "v1_farms_list",
+                "tags": [
+                    "v1"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/Farm"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            },
+            "post": {
+                "operationId": "v1_farms_create",
+                "tags": [
+                    "v1"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Farm"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Farm"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Farm"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Farm"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/farms/{farm_id}/ndvi/latest/": {
+            "get": {
+                "operationId": "v1_farms_ndvi_latest_retrieve",
+                "description": "Return the most recent NDVI observation if present.\n\nQuery params: lookback_days (optional), max_cloud (optional).\nSuccess: envelope with `observation` or null, plus stale flag.\nSide effects: enqueues refresh_latest job when missing/stale.",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "farm_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    },
+                    {
+                        "in": "query",
+                        "name": "lookback_days",
+                        "schema": {
+                            "type": "integer"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "max_cloud",
+                        "schema": {
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "tags": [
+                    "v1"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NdviLatestSuccess"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NdviErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NdviErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/farms/{farm_id}/ndvi/raster.png": {
+            "get": {
+                "operationId": "v1_farms_ndvi_raster.png_retrieve",
+                "description": "Return a cached NDVI raster PNG or 404 if missing.\n\nQuery params: date (required), optional size and max_cloud.\nSuccess: binary image/png with ETag + Cache-Control.\nErrors: standard error envelope.",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "date",
+                        "schema": {
+                            "type": "string",
+                            "format": "date"
+                        },
+                        "required": true
+                    },
+                    {
+                        "in": "path",
+                        "name": "farm_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    },
+                    {
+                        "in": "query",
+                        "name": "max_cloud",
+                        "schema": {
+                            "type": "integer"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "size",
+                        "schema": {
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "tags": [
+                    "v1"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "string",
+                                    "format": "binary"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "304": {
+                        "description": "Not Modified"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NdviErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/farms/{farm_id}/ndvi/raster/queue": {
+            "post": {
+                "operationId": "v1_farms_ndvi_raster_queue_create",
+                "description": "Enqueue a raster render job for the specified date.",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "farm_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "v1"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/RasterPngRequest"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/RasterPngRequest"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/RasterPngRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NdviRasterQueueSuccess"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NdviErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NdviErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NdviErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/farms/{farm_id}/ndvi/refresh/": {
+            "post": {
+                "operationId": "v1_farms_ndvi_refresh_create",
+                "description": "Enqueue a refresh_latest job if not recently triggered.",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "farm_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "v1"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NdviRefreshSuccess"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NdviErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NdviErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "429": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NdviErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/farms/{farm_id}/ndvi/timeseries/": {
+            "get": {
+                "operationId": "v1_farms_ndvi_timeseries_retrieve",
+                "description": "Return NDVI observations for the requested range.\n\nQuery params: start, end, optional step_days, optional max_cloud.\nSuccess: envelope containing observations + metadata\n(is_partial, missing_buckets_count).\nSide effects: schedules gap-fill job when buckets are missing.",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "end",
+                        "schema": {
+                            "type": "string",
+                            "format": "date"
+                        },
+                        "required": true
+                    },
+                    {
+                        "in": "path",
+                        "name": "farm_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    },
+                    {
+                        "in": "query",
+                        "name": "max_cloud",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "Maximum cloud coverage percent (0-100)"
+                    },
+                    {
+                        "in": "query",
+                        "name": "start",
+                        "schema": {
+                            "type": "string",
+                            "format": "date"
+                        },
+                        "required": true
+                    },
+                    {
+                        "in": "query",
+                        "name": "step_days",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "Days per bucket (1-30)"
+                    }
+                ],
+                "tags": [
+                    "v1"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NdviTimeseriesSuccess"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NdviErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NdviErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/farms/{id}/": {
+            "get": {
+                "operationId": "v1_farms_retrieve",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "A unique integer value identifying this farm.",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "v1"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Farm"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            },
+            "put": {
+                "operationId": "v1_farms_update",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "A unique integer value identifying this farm.",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "v1"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Farm"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Farm"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Farm"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Farm"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            },
+            "patch": {
+                "operationId": "v1_farms_partial_update",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "A unique integer value identifying this farm.",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "v1"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/PatchedFarm"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/PatchedFarm"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/PatchedFarm"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Farm"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            },
+            "delete": {
+                "operationId": "v1_farms_destroy",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "A unique integer value identifying this farm.",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "v1"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No response body"
+                    }
+                }
+            }
+        },
+        "/api/v1/integrations/clients/": {
+            "get": {
+                "operationId": "v1_integrations_clients_list",
+                "description": "List IntegrationClients (no secret fields).",
+                "tags": [
+                    "v1"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/IntegrationClientListSuccessResponse"
+                                    }
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/IntegrationClientErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/IntegrationClientErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            },
+            "post": {
+                "operationId": "v1_integrations_clients_create",
+                "description": "Create an IntegrationClient and return its secret once.",
+                "tags": [
+                    "v1"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/IntegrationClientCreate"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/IntegrationClientCreate"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/IntegrationClientCreate"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/IntegrationClientCreateSuccessResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/IntegrationClientErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/IntegrationClientErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/IntegrationClientErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/integrations/clients/{id}/": {
+            "get": {
+                "operationId": "v1_integrations_clients_retrieve",
+                "description": "Retrieve an IntegrationClient (no secret fields).",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "description": "A UUID string identifying this integration client.",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "v1"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/IntegrationClientRetrieveSuccessResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/IntegrationClientErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/IntegrationClientErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/IntegrationClientErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            },
+            "patch": {
+                "operationId": "v1_integrations_clients_partial_update",
+                "description": "Update `name`/`is_active` (secrets cannot be changed here).",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "description": "A UUID string identifying this integration client.",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "v1"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/PatchedIntegrationClientUpdate"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/PatchedIntegrationClientUpdate"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/PatchedIntegrationClientUpdate"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/IntegrationClientUpdateSuccessResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/IntegrationClientErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/IntegrationClientErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/IntegrationClientErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/IntegrationClientErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/integrations/clients/{id}/rotate-secret/": {
+            "post": {
+                "operationId": "v1_integrations_clients_rotate_secret_create",
+                "description": "Rotate the client's secret and return the new secret once.",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "description": "A UUID string identifying this integration client.",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "v1"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/IntegrationClientRotateSecretSuccessResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/IntegrationClientErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/IntegrationClientErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/IntegrationClientErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/IntegrationClientConflictResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/integrations/nextcloud/ping/": {
+            "get": {
+                "operationId": "v1_integrations_nextcloud_ping_retrieve",
+                "description": "Return `ok` + verified `client_id` if HMAC validation succeeds.\n\nInputs: signature headers (X-Client-Id or X-NC-CLIENT-ID,\nX-NC-TIMESTAMP, X-NC-NONCE, X-NC-SIGNATURE).\nOutput: success envelope with `data.ok` and `data.client_id`.\nSide effects: stores the nonce in the configured cache for replay\nprotection.",
+                "parameters": [
+                    {
+                        "in": "header",
+                        "name": "X-Client-Id",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "Integration client identifier (UUID).",
+                        "required": true
+                    },
+                    {
+                        "in": "header",
+                        "name": "X-NC-CLIENT-ID",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "Deprecated alias for X-Client-Id.",
+                        "deprecated": true
+                    },
+                    {
+                        "in": "header",
+                        "name": "X-NC-NONCE",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "Unique per-request nonce.",
+                        "required": true
+                    },
+                    {
+                        "in": "header",
+                        "name": "X-NC-SIGNATURE",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "Hex HMAC-SHA256 of canonical request string.",
+                        "required": true
+                    },
+                    {
+                        "in": "header",
+                        "name": "X-NC-TIMESTAMP",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "Unix timestamp (seconds).",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "v1"
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NextcloudPingSuccessResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NextcloudPingErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/integrations/ping/": {
+            "get": {
+                "operationId": "v1_integrations_ping_retrieve",
+                "description": "Return `pong` with API key-authenticated metadata.",
+                "tags": [
+                    "v1"
+                ],
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/IntegrationPingSuccessResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/IntegrationClientErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/integrations/token/": {
+            "post": {
+                "operationId": "v1_integrations_token_create",
+                "description": "Validate API key + HMAC headers, mint a JWT, and return it.\n\nInputs: `X-API-Key` plus HMAC headers (`X-Client-Id`, `X-Timestamp`,\n`X-Nonce`, `X-Signature`).\nOutput: success envelope with `data.access`, `data.token_type`,\n`data.expires_in`.\nSide effects: stores the nonce in cache for replay protection.",
+                "parameters": [
+                    {
+                        "in": "header",
+                        "name": "X-Client-Id",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "Integration client identifier (UUID).",
+                        "required": true
+                    },
+                    {
+                        "in": "header",
+                        "name": "X-Nonce",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "Unique per-request nonce.",
+                        "required": true
+                    },
+                    {
+                        "in": "header",
+                        "name": "X-Signature",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "Hex HMAC-SHA256 of canonical request string.",
+                        "required": true
+                    },
+                    {
+                        "in": "header",
+                        "name": "X-Timestamp",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "Unix timestamp (seconds).",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "v1"
+                ],
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/IntegrationTokenSuccessResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/IntegrationAuthErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/IntegrationAuthErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/integrations/whoami/": {
+            "get": {
+                "operationId": "v1_integrations_whoami_retrieve",
+                "description": "Return the integration JWT identity claims.\n\nAuthentication: BearerAuth (integration JWT).\nPermissions: IsAuthenticated.\nRequest body: none.\nResponse data: `sub`, `scope`, and `server_time`.",
+                "tags": [
+                    "v1"
+                ],
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/IntegrationWhoamiSuccessResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/IntegrationAuthErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/keys/": {
+            "get": {
+                "operationId": "v1_keys_retrieve",
+                "description": "Return all API keys belonging to the authenticated user.",
+                "tags": [
+                    "v1"
+                ],
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiKeyListSuccessResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiKeysErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            },
+            "post": {
+                "operationId": "v1_keys_create",
+                "description": "Create a new API key for the authenticated user.",
+                "tags": [
+                    "v1"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ApiKeyCreate"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ApiKeyCreate"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ApiKeyCreate"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiKeyCreateSuccessResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiKeysErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiKeysErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/keys/{id}/": {
+            "delete": {
+                "operationId": "v1_keys_destroy",
+                "description": "Revoke the API key identified by `pk`.",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "v1"
+                ],
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiKeyRevokeSuccessResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiKeysErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiKeysErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiKeysErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/keys/{id}/rotate/": {
+            "post": {
+                "operationId": "v1_keys_rotate_create",
+                "description": "Revoke the current key (if needed) and return a new key.",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "v1"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/PatchedApiKeyCreate"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/PatchedApiKeyCreate"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/PatchedApiKeyCreate"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiKeyRotateSuccessResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiKeysErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiKeysErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiKeysErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/ndvi/jobs/{job_id}/": {
+            "get": {
+                "operationId": "v1_ndvi_jobs_retrieve",
+                "description": "Return the status of an NDVI job.",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "job_id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "v1"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NdviJobSuccess"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NdviErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/weather/current/": {
+            "get": {
+                "operationId": "v1_weather_current_retrieve",
+                "description": "Return current conditions.\n\nInputs: lat/lon (required), optional tz/provider.\nOutputs: envelope with the current observation timestamp (+offset),\ntemperature (C), wind speed (m/s), provider name.",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "lat",
+                        "schema": {
+                            "type": "number",
+                            "format": "float"
+                        },
+                        "required": true
+                    },
+                    {
+                        "in": "query",
+                        "name": "lon",
+                        "schema": {
+                            "type": "number",
+                            "format": "float"
+                        },
+                        "required": true
+                    },
+                    {
+                        "in": "query",
+                        "name": "provider",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "Weather provider (open_meteo or nasa_power)"
+                    },
+                    {
+                        "in": "query",
+                        "name": "tz",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "IANA timezone (default Africa/Nairobi)"
+                    }
+                ],
+                "tags": [
+                    "v1"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/WeatherCurrentSuccess"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/WeatherErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/WeatherErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/WeatherErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/weather/daily/": {
+            "get": {
+                "operationId": "v1_weather_daily_retrieve",
+                "description": "Return daily data for the inclusive date range.\n\nInputs: lat, lon, start/end dates (YYYY-MM-DD), optional tz/provider.\nOutputs: envelope with `forecasts` containing daily\nmin/max/precipitation in Africa/Nairobi by default.",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "end",
+                        "schema": {
+                            "type": "string",
+                            "format": "date"
+                        },
+                        "required": true
+                    },
+                    {
+                        "in": "query",
+                        "name": "lat",
+                        "schema": {
+                            "type": "number",
+                            "format": "float"
+                        },
+                        "required": true
+                    },
+                    {
+                        "in": "query",
+                        "name": "lon",
+                        "schema": {
+                            "type": "number",
+                            "format": "float"
+                        },
+                        "required": true
+                    },
+                    {
+                        "in": "query",
+                        "name": "provider",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "Weather provider (open_meteo or nasa_power)"
+                    },
+                    {
+                        "in": "query",
+                        "name": "start",
+                        "schema": {
+                            "type": "string",
+                            "format": "date"
+                        },
+                        "required": true
+                    },
+                    {
+                        "in": "query",
+                        "name": "tz",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "IANA timezone (default Africa/Nairobi)"
+                    }
+                ],
+                "tags": [
+                    "v1"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/WeatherDailySuccess"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/WeatherErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/WeatherErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/WeatherErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/v1/weather/weekly/": {
+            "get": {
+                "operationId": "v1_weather_weekly_retrieve",
+                "description": "Return weekly aggregates over the supplied date range.\n\nInputs: lat, lon, start/end dates (YYYY-MM-DD), optional tz/provider.\nOutputs: envelope with `reports` where each report contains weekly\naverages (temps) and summed precipitation in Africa/Nairobi by default.",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "end",
+                        "schema": {
+                            "type": "string",
+                            "format": "date"
+                        },
+                        "required": true
+                    },
+                    {
+                        "in": "query",
+                        "name": "lat",
+                        "schema": {
+                            "type": "number",
+                            "format": "float"
+                        },
+                        "required": true
+                    },
+                    {
+                        "in": "query",
+                        "name": "lon",
+                        "schema": {
+                            "type": "number",
+                            "format": "float"
+                        },
+                        "required": true
+                    },
+                    {
+                        "in": "query",
+                        "name": "provider",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "Weather provider (open_meteo or nasa_power)"
+                    },
+                    {
+                        "in": "query",
+                        "name": "start",
+                        "schema": {
+                            "type": "string",
+                            "format": "date"
+                        },
+                        "required": true
+                    },
+                    {
+                        "in": "query",
+                        "name": "tz",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "IANA timezone (default Africa/Nairobi)"
+                    }
+                ],
+                "tags": [
+                    "v1"
+                ],
+                "security": [
+                    {
+                        "jwtAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/WeatherWeeklySuccess"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/WeatherErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/WeatherErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/WeatherErrorResponse"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        }
+    },
+    "components": {
+        "schemas": {
+            "ApiKeyCreate": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "readOnly": true
+                    },
+                    "name": {
+                        "type": "string",
+                        "maxLength": 128
+                    },
+                    "scope": {
+                        "enum": [
+                            "read",
+                            "write",
+                            "admin"
+                        ],
+                        "type": "string",
+                        "description": "* `read` - Read\n* `write` - Write\n* `admin` - Admin",
+                        "x-spec-enum-id": "7b9ee2fe711652dc"
+                    },
+                    "prefix": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "last4": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "api_key": {
+                        "type": "string",
+                        "nullable": true,
+                        "readOnly": true
+                    },
+                    "expires_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "api_key",
+                    "id",
+                    "last4",
+                    "name",
+                    "prefix"
+                ]
+            },
+            "ApiKeyCreateSuccessResponse": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "$ref": "#/components/schemas/ApiKeyCreate"
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "ApiKeyList": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "readOnly": true
+                    },
+                    "name": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "scope": {
+                        "enum": [
+                            "read",
+                            "write",
+                            "admin"
+                        ],
+                        "type": "string",
+                        "description": "* `read` - Read\n* `write` - Write\n* `admin` - Admin",
+                        "x-spec-enum-id": "7b9ee2fe711652dc",
+                        "readOnly": true
+                    },
+                    "prefix": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "last4": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true
+                    },
+                    "expires_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true,
+                        "nullable": true
+                    },
+                    "revoked_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true,
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "created_at",
+                    "expires_at",
+                    "id",
+                    "last4",
+                    "name",
+                    "prefix",
+                    "revoked_at",
+                    "scope"
+                ]
+            },
+            "ApiKeyListSuccessResponse": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/ApiKeyList"
+                        }
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "ApiKeyRevokeSuccessResponse": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "nullable": true
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "ApiKeyRotateData": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "scope": {
+                        "enum": [
+                            "read",
+                            "write",
+                            "admin"
+                        ],
+                        "type": "string",
+                        "description": "* `read` - read\n* `write` - write\n* `admin` - admin",
+                        "x-spec-enum-id": "4f9d93526e2614fd"
+                    },
+                    "prefix": {
+                        "type": "string"
+                    },
+                    "last4": {
+                        "type": "string"
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "expires_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "revoked_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "api_key": {
+                        "type": "string",
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "api_key",
+                    "created_at",
+                    "expires_at",
+                    "id",
+                    "last4",
+                    "name",
+                    "prefix",
+                    "revoked_at",
+                    "scope"
+                ]
+            },
+            "ApiKeyRotateSuccessResponse": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "$ref": "#/components/schemas/ApiKeyRotateData"
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "ApiKeysErrorResponse": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "AuthErrorResponse": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "AuthSuccessResponse": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "$ref": "#/components/schemas/AuthUserTokens"
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "AuthTokens": {
+                "type": "object",
+                "properties": {
+                    "refresh": {
+                        "type": "string"
+                    },
+                    "access": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "access",
+                    "refresh"
+                ]
+            },
+            "AuthUserTokens": {
+                "type": "object",
+                "properties": {
+                    "tokens": {
+                        "$ref": "#/components/schemas/AuthTokens"
+                    },
+                    "user": {
+                        "$ref": "#/components/schemas/Me"
+                    }
+                },
+                "required": [
+                    "tokens",
+                    "user"
+                ]
+            },
+            "CurrentWeather": {
+                "type": "object",
+                "properties": {
+                    "observed_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "temperature_c": {
+                        "type": "number",
+                        "format": "double",
+                        "nullable": true
+                    },
+                    "wind_speed_mps": {
+                        "type": "number",
+                        "format": "double",
+                        "nullable": true
+                    },
+                    "source": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "observed_at",
+                    "source",
+                    "temperature_c",
+                    "wind_speed_mps"
+                ]
+            },
+            "DailyForecast": {
+                "type": "object",
+                "properties": {
+                    "day": {
+                        "type": "string",
+                        "format": "date"
+                    },
+                    "t_min_c": {
+                        "type": "number",
+                        "format": "double",
+                        "nullable": true
+                    },
+                    "t_max_c": {
+                        "type": "number",
+                        "format": "double",
+                        "nullable": true
+                    },
+                    "precipitation_mm": {
+                        "type": "number",
+                        "format": "double",
+                        "nullable": true
+                    },
+                    "source": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "day",
+                    "precipitation_mm",
+                    "source",
+                    "t_max_c",
+                    "t_min_c"
+                ]
+            },
+            "Farm": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "name": {
+                        "type": "string",
+                        "maxLength": 120
+                    },
+                    "slug": {
+                        "type": "string",
+                        "readOnly": true,
+                        "pattern": "^[-a-zA-Z0-9_]+$"
+                    },
+                    "centroid_lat": {
+                        "type": "string",
+                        "format": "decimal",
+                        "pattern": "^-?\\d{0,3}(?:\\.\\d{0,5})?$",
+                        "nullable": true
+                    },
+                    "centroid_lon": {
+                        "type": "string",
+                        "format": "decimal",
+                        "pattern": "^-?\\d{0,3}(?:\\.\\d{0,5})?$",
+                        "nullable": true
+                    },
+                    "bbox_south": {
+                        "type": "string",
+                        "format": "decimal",
+                        "pattern": "^-?\\d{0,3}(?:\\.\\d{0,5})?$",
+                        "nullable": true
+                    },
+                    "bbox_west": {
+                        "type": "string",
+                        "format": "decimal",
+                        "pattern": "^-?\\d{0,4}(?:\\.\\d{0,5})?$",
+                        "nullable": true
+                    },
+                    "bbox_north": {
+                        "type": "string",
+                        "format": "decimal",
+                        "pattern": "^-?\\d{0,3}(?:\\.\\d{0,5})?$",
+                        "nullable": true
+                    },
+                    "bbox_east": {
+                        "type": "string",
+                        "format": "decimal",
+                        "pattern": "^-?\\d{0,4}(?:\\.\\d{0,5})?$",
+                        "nullable": true
+                    },
+                    "area_ha": {
+                        "type": "string",
+                        "format": "decimal",
+                        "pattern": "^-?\\d{0,9}(?:\\.\\d{0,3})?$",
+                        "nullable": true
+                    },
+                    "is_active": {
+                        "type": "boolean"
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true
+                    },
+                    "updated_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true
+                    }
+                },
+                "required": [
+                    "created_at",
+                    "id",
+                    "name",
+                    "slug",
+                    "updated_at"
+                ]
+            },
+            "IntegrationAuthErrorResponse": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "IntegrationClient": {
+                "type": "object",
+                "description": "Read serializer for IntegrationClient (no secret fields).",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "readOnly": true
+                    },
+                    "name": {
+                        "type": "string",
+                        "maxLength": 128
+                    },
+                    "client_id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "readOnly": true
+                    },
+                    "is_active": {
+                        "type": "boolean"
+                    },
+                    "rotated_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "previous_expires_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true
+                    },
+                    "updated_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true
+                    }
+                },
+                "required": [
+                    "client_id",
+                    "created_at",
+                    "id",
+                    "name",
+                    "updated_at"
+                ]
+            },
+            "IntegrationClientConflictResponse": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "data": {
+                        "nullable": true
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "IntegrationClientCreate": {
+                "type": "object",
+                "description": "Create serializer for IntegrationClient (name + optional is_active).",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "maxLength": 128
+                    },
+                    "is_active": {
+                        "type": "boolean"
+                    }
+                },
+                "required": [
+                    "name"
+                ]
+            },
+            "IntegrationClientCreateData": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "client_id": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "client_secret": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "client_id",
+                    "client_secret",
+                    "id",
+                    "name"
+                ]
+            },
+            "IntegrationClientCreateSuccessResponse": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "$ref": "#/components/schemas/IntegrationClientCreateData"
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "IntegrationClientErrorResponse": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "IntegrationClientListSuccessResponse": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/IntegrationClient"
+                        }
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "IntegrationClientRetrieveSuccessResponse": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "$ref": "#/components/schemas/IntegrationClient"
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "IntegrationClientRotateSecretData": {
+                "type": "object",
+                "properties": {
+                    "client_id": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "client_secret": {
+                        "type": "string"
+                    },
+                    "previous_valid_until": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "client_id",
+                    "client_secret",
+                    "previous_valid_until"
+                ]
+            },
+            "IntegrationClientRotateSecretSuccessResponse": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "$ref": "#/components/schemas/IntegrationClientRotateSecretData"
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "IntegrationClientUpdateSuccessResponse": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "$ref": "#/components/schemas/IntegrationClient"
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "IntegrationPingData": {
+                "type": "object",
+                "properties": {
+                    "ok": {
+                        "type": "boolean"
+                    },
+                    "auth": {
+                        "type": "string"
+                    },
+                    "user_id": {
+                        "type": "string"
+                    },
+                    "key_id": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "scope": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "server_time": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                },
+                "required": [
+                    "auth",
+                    "key_id",
+                    "ok",
+                    "scope",
+                    "server_time",
+                    "user_id"
+                ]
+            },
+            "IntegrationPingSuccessResponse": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "$ref": "#/components/schemas/IntegrationPingData"
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "IntegrationTokenData": {
+                "type": "object",
+                "properties": {
+                    "access": {
+                        "type": "string"
+                    },
+                    "token_type": {
+                        "type": "string"
+                    },
+                    "expires_in": {
+                        "type": "integer"
+                    }
+                },
+                "required": [
+                    "access",
+                    "expires_in",
+                    "token_type"
+                ]
+            },
+            "IntegrationTokenSuccessResponse": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "$ref": "#/components/schemas/IntegrationTokenData"
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "IntegrationWhoamiData": {
+                "type": "object",
+                "properties": {
+                    "sub": {
+                        "type": "string"
+                    },
+                    "scope": {
+                        "type": "string"
+                    },
+                    "server_time": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                },
+                "required": [
+                    "scope",
+                    "server_time",
+                    "sub"
+                ]
+            },
+            "IntegrationWhoamiSuccessResponse": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "$ref": "#/components/schemas/IntegrationWhoamiData"
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "Login": {
+                "type": "object",
+                "properties": {
+                    "identifier": {
+                        "type": "string"
+                    },
+                    "password": {
+                        "type": "string",
+                        "writeOnly": true
+                    }
+                },
+                "required": [
+                    "identifier",
+                    "password"
+                ]
+            },
+            "Me": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "username": {
+                        "type": "string",
+                        "description": "Required. 150 characters or fewer. Letters, digits and @/./+/-/_ only.",
+                        "pattern": "^[\\w.@+-]+$",
+                        "maxLength": 150
+                    },
+                    "email": {
+                        "type": "string",
+                        "format": "email",
+                        "title": "Email address",
+                        "maxLength": 254
+                    },
+                    "date_joined": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                },
+                "required": [
+                    "id",
+                    "username"
+                ]
+            },
+            "MeSuccessResponse": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "$ref": "#/components/schemas/Me"
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "NdviErrorResponse": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "NdviJob": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "job_type": {
+                        "enum": [
+                            "refresh_latest",
+                            "gap_fill",
+                            "backfill",
+                            "raster_png"
+                        ],
+                        "type": "string",
+                        "description": "* `refresh_latest` - Refresh latest\n* `gap_fill` - Gap fill\n* `backfill` - Backfill\n* `raster_png` - Raster PNG",
+                        "x-spec-enum-id": "15b09757c72f538e",
+                        "readOnly": true
+                    },
+                    "status": {
+                        "enum": [
+                            "queued",
+                            "running",
+                            "success",
+                            "failed"
+                        ],
+                        "type": "string",
+                        "description": "* `queued` - Queued\n* `running` - Running\n* `success` - Success\n* `failed` - Failed",
+                        "x-spec-enum-id": "d0d44a2f00e8c638",
+                        "readOnly": true
+                    },
+                    "start": {
+                        "type": "string",
+                        "format": "date",
+                        "readOnly": true,
+                        "nullable": true
+                    },
+                    "end": {
+                        "type": "string",
+                        "format": "date",
+                        "readOnly": true,
+                        "nullable": true
+                    },
+                    "step_days": {
+                        "type": "integer",
+                        "readOnly": true,
+                        "nullable": true
+                    },
+                    "max_cloud": {
+                        "type": "integer",
+                        "readOnly": true,
+                        "nullable": true
+                    },
+                    "lookback_days": {
+                        "type": "integer",
+                        "readOnly": true,
+                        "nullable": true
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true
+                    },
+                    "started_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true,
+                        "nullable": true
+                    },
+                    "finished_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true,
+                        "nullable": true
+                    },
+                    "attempts": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "last_error": {
+                        "type": "string",
+                        "readOnly": true,
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "attempts",
+                    "created_at",
+                    "end",
+                    "finished_at",
+                    "id",
+                    "job_type",
+                    "last_error",
+                    "lookback_days",
+                    "max_cloud",
+                    "start",
+                    "started_at",
+                    "status",
+                    "step_days"
+                ]
+            },
+            "NdviJobSuccess": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "$ref": "#/components/schemas/NdviJob"
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "NdviLatestData": {
+                "type": "object",
+                "properties": {
+                    "observation": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/NdviObservation"
+                            }
+                        ],
+                        "nullable": true
+                    },
+                    "engine": {
+                        "type": "string"
+                    },
+                    "lookback_days": {
+                        "type": "integer"
+                    },
+                    "max_cloud": {
+                        "type": "integer"
+                    },
+                    "stale": {
+                        "type": "boolean"
+                    }
+                },
+                "required": [
+                    "engine",
+                    "lookback_days",
+                    "max_cloud",
+                    "observation",
+                    "stale"
+                ]
+            },
+            "NdviLatestSuccess": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "$ref": "#/components/schemas/NdviLatestData"
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "NdviObservation": {
+                "type": "object",
+                "properties": {
+                    "bucket_date": {
+                        "type": "string",
+                        "format": "date"
+                    },
+                    "mean": {
+                        "type": "number",
+                        "format": "double"
+                    },
+                    "min": {
+                        "type": "number",
+                        "format": "double",
+                        "nullable": true
+                    },
+                    "max": {
+                        "type": "number",
+                        "format": "double",
+                        "nullable": true
+                    },
+                    "sample_count": {
+                        "type": "integer",
+                        "maximum": 2147483647,
+                        "minimum": -2147483648,
+                        "nullable": true
+                    },
+                    "cloud_fraction": {
+                        "type": "number",
+                        "format": "double",
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "bucket_date",
+                    "mean"
+                ]
+            },
+            "NdviRasterQueueData": {
+                "type": "object",
+                "properties": {
+                    "job_id": {
+                        "type": "integer"
+                    }
+                },
+                "required": [
+                    "job_id"
+                ]
+            },
+            "NdviRasterQueueSuccess": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "$ref": "#/components/schemas/NdviRasterQueueData"
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "NdviRefreshData": {
+                "type": "object",
+                "properties": {
+                    "job_id": {
+                        "type": "integer"
+                    }
+                },
+                "required": [
+                    "job_id"
+                ]
+            },
+            "NdviRefreshSuccess": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "$ref": "#/components/schemas/NdviRefreshData"
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "NdviTimeseriesData": {
+                "type": "object",
+                "properties": {
+                    "observations": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/NdviObservation"
+                        }
+                    },
+                    "engine": {
+                        "type": "string"
+                    },
+                    "start": {
+                        "type": "string",
+                        "format": "date"
+                    },
+                    "end": {
+                        "type": "string",
+                        "format": "date"
+                    },
+                    "step_days": {
+                        "type": "integer"
+                    },
+                    "max_cloud": {
+                        "type": "integer"
+                    },
+                    "is_partial": {
+                        "type": "boolean"
+                    },
+                    "missing_buckets_count": {
+                        "type": "integer"
+                    }
+                },
+                "required": [
+                    "end",
+                    "engine",
+                    "is_partial",
+                    "max_cloud",
+                    "missing_buckets_count",
+                    "observations",
+                    "start",
+                    "step_days"
+                ]
+            },
+            "NdviTimeseriesSuccess": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "$ref": "#/components/schemas/NdviTimeseriesData"
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "NextcloudPingData": {
+                "type": "object",
+                "properties": {
+                    "ok": {
+                        "type": "boolean"
+                    },
+                    "client_id": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "client_id",
+                    "ok"
+                ]
+            },
+            "NextcloudPingErrorResponse": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "NextcloudPingSuccessResponse": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "$ref": "#/components/schemas/NextcloudPingData"
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "PasswordChange": {
+                "type": "object",
+                "properties": {
+                    "old_password": {
+                        "type": "string",
+                        "writeOnly": true
+                    },
+                    "new_password": {
+                        "type": "string",
+                        "writeOnly": true
+                    },
+                    "new_password2": {
+                        "type": "string",
+                        "writeOnly": true
+                    }
+                },
+                "required": [
+                    "new_password",
+                    "new_password2",
+                    "old_password"
+                ]
+            },
+            "PasswordChangeSuccessResponse": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "nullable": true
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "PasswordResetConfirm": {
+                "type": "object",
+                "properties": {
+                    "uid": {
+                        "type": "string"
+                    },
+                    "token": {
+                        "type": "string"
+                    },
+                    "new_password": {
+                        "type": "string",
+                        "writeOnly": true
+                    }
+                },
+                "required": [
+                    "new_password",
+                    "token",
+                    "uid"
+                ]
+            },
+            "PasswordResetConfirmSuccessResponse": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "nullable": true
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "PasswordResetErrorResponse": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "data": {
+                        "nullable": true
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "PasswordResetRequest": {
+                "type": "object",
+                "properties": {
+                    "email": {
+                        "type": "string",
+                        "format": "email"
+                    }
+                },
+                "required": [
+                    "email"
+                ]
+            },
+            "PasswordResetRequestSuccessResponse": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "nullable": true
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "PatchedApiKeyCreate": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "readOnly": true
+                    },
+                    "name": {
+                        "type": "string",
+                        "maxLength": 128
+                    },
+                    "scope": {
+                        "enum": [
+                            "read",
+                            "write",
+                            "admin"
+                        ],
+                        "type": "string",
+                        "description": "* `read` - Read\n* `write` - Write\n* `admin` - Admin",
+                        "x-spec-enum-id": "7b9ee2fe711652dc"
+                    },
+                    "prefix": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "last4": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "api_key": {
+                        "type": "string",
+                        "nullable": true,
+                        "readOnly": true
+                    },
+                    "expires_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    }
+                }
+            },
+            "PatchedFarm": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "name": {
+                        "type": "string",
+                        "maxLength": 120
+                    },
+                    "slug": {
+                        "type": "string",
+                        "readOnly": true,
+                        "pattern": "^[-a-zA-Z0-9_]+$"
+                    },
+                    "centroid_lat": {
+                        "type": "string",
+                        "format": "decimal",
+                        "pattern": "^-?\\d{0,3}(?:\\.\\d{0,5})?$",
+                        "nullable": true
+                    },
+                    "centroid_lon": {
+                        "type": "string",
+                        "format": "decimal",
+                        "pattern": "^-?\\d{0,3}(?:\\.\\d{0,5})?$",
+                        "nullable": true
+                    },
+                    "bbox_south": {
+                        "type": "string",
+                        "format": "decimal",
+                        "pattern": "^-?\\d{0,3}(?:\\.\\d{0,5})?$",
+                        "nullable": true
+                    },
+                    "bbox_west": {
+                        "type": "string",
+                        "format": "decimal",
+                        "pattern": "^-?\\d{0,4}(?:\\.\\d{0,5})?$",
+                        "nullable": true
+                    },
+                    "bbox_north": {
+                        "type": "string",
+                        "format": "decimal",
+                        "pattern": "^-?\\d{0,3}(?:\\.\\d{0,5})?$",
+                        "nullable": true
+                    },
+                    "bbox_east": {
+                        "type": "string",
+                        "format": "decimal",
+                        "pattern": "^-?\\d{0,4}(?:\\.\\d{0,5})?$",
+                        "nullable": true
+                    },
+                    "area_ha": {
+                        "type": "string",
+                        "format": "decimal",
+                        "pattern": "^-?\\d{0,9}(?:\\.\\d{0,3})?$",
+                        "nullable": true
+                    },
+                    "is_active": {
+                        "type": "boolean"
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true
+                    },
+                    "updated_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true
+                    }
+                }
+            },
+            "PatchedIntegrationClientUpdate": {
+                "type": "object",
+                "description": "Update serializer for IntegrationClient (no secret fields).",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "maxLength": 128
+                    },
+                    "is_active": {
+                        "type": "boolean"
+                    }
+                }
+            },
+            "RasterPngRequest": {
+                "type": "object",
+                "properties": {
+                    "date": {
+                        "type": "string",
+                        "format": "date"
+                    },
+                    "size": {
+                        "type": "integer"
+                    },
+                    "max_cloud": {
+                        "type": "integer",
+                        "maximum": 100,
+                        "minimum": 0
+                    }
+                },
+                "required": [
+                    "date"
+                ]
+            },
+            "Register": {
+                "type": "object",
+                "properties": {
+                    "username": {
+                        "type": "string",
+                        "maxLength": 150
+                    },
+                    "email": {
+                        "type": "string",
+                        "format": "email"
+                    },
+                    "password": {
+                        "type": "string",
+                        "writeOnly": true
+                    },
+                    "password2": {
+                        "type": "string",
+                        "writeOnly": true
+                    }
+                },
+                "required": [
+                    "email",
+                    "password",
+                    "password2",
+                    "username"
+                ]
+            },
+            "TokenRefresh": {
+                "type": "object",
+                "properties": {
+                    "access": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "refresh": {
+                        "type": "string",
+                        "writeOnly": true
+                    }
+                },
+                "required": [
+                    "access",
+                    "refresh"
+                ]
+            },
+            "TokenRefreshData": {
+                "type": "object",
+                "properties": {
+                    "access": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "access"
+                ]
+            },
+            "TokenRefreshSuccessResponse": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "$ref": "#/components/schemas/TokenRefreshData"
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "WeatherCurrentSuccess": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "$ref": "#/components/schemas/CurrentWeather"
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "WeatherDailyData": {
+                "type": "object",
+                "properties": {
+                    "forecasts": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/DailyForecast"
+                        }
+                    }
+                },
+                "required": [
+                    "forecasts"
+                ]
+            },
+            "WeatherDailySuccess": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "$ref": "#/components/schemas/WeatherDailyData"
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "WeatherErrorResponse": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "WeatherWeeklyData": {
+                "type": "object",
+                "properties": {
+                    "reports": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/WeeklyReport"
+                        }
+                    }
+                },
+                "required": [
+                    "reports"
+                ]
+            },
+            "WeatherWeeklySuccess": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "$ref": "#/components/schemas/WeatherWeeklyData"
+                    },
+                    "status": {
+                        "type": "integer"
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "errors": {
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "data",
+                    "errors",
+                    "message",
+                    "status"
+                ]
+            },
+            "WeeklyReport": {
+                "type": "object",
+                "properties": {
+                    "week_start": {
+                        "type": "string",
+                        "format": "date"
+                    },
+                    "week_end": {
+                        "type": "string",
+                        "format": "date"
+                    },
+                    "t_min_avg_c": {
+                        "type": "number",
+                        "format": "double",
+                        "nullable": true
+                    },
+                    "t_max_avg_c": {
+                        "type": "number",
+                        "format": "double",
+                        "nullable": true
+                    },
+                    "precipitation_sum_mm": {
+                        "type": "number",
+                        "format": "double",
+                        "nullable": true
+                    },
+                    "days": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/DailyForecast"
+                        }
+                    },
+                    "source": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "days",
+                    "precipitation_sum_mm",
+                    "source",
+                    "t_max_avg_c",
+                    "t_min_avg_c",
+                    "week_end",
+                    "week_start"
+                ]
+            }
+        },
+        "securitySchemes": {
+            "ApiKeyAuth": {
+                "type": "apiKey",
+                "in": "header",
+                "name": "X-API-Key"
+            },
+            "BearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "JWT"
+            },
+            "jwtAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "JWT"
+            }
+        }
+    }
+}

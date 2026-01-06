@@ -154,7 +154,7 @@ Failure response:
 
 ### Integration token bootstrap (API key + HMAC)
 
-- `POST /api/v1/integration/token/`
+- `POST /api/v1/integrations/token/`
 - Authentication: `X-API-Key` plus HMAC signature headers.
 - Required headers:
   - `X-API-Key`: plaintext API key (service account)
@@ -186,8 +186,8 @@ Environment variables (from code: `config/settings.py`):
 
 ## Integration clients + secret rotation
 
-Admin-only endpoints under `/api/v1/integrations/clients/` (also available under `/api/v1/integration/clients/`
-for backwards compatibility) let operators manage the UUID-based `X-Client-Id` records:
+Admin-only endpoints under `/api/v1/integrations/clients/` (legacy `/api/v1/integration/clients/` aliases are
+deprecated) let operators manage the UUID-based `X-Client-Id` records:
 
 - `POST /clients/` – create a client; response returns `{ "client_id": "<uuid>", "client_secret": "<secret>" }`
   and the secret is shown only once. Store that secret in the Nextcloud instance configuration.

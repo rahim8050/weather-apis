@@ -393,6 +393,9 @@ SPECTACULAR_SETTINGS = {
     "API key lifecycle management.",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
+    "POSTPROCESSING_HOOKS": [
+        "config.api.openapi.remove_deprecated_integration_aliases",
+    ],
     "APPEND_COMPONENTS": {
         "securitySchemes": {
             "BearerAuth": {

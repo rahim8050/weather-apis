@@ -117,15 +117,18 @@ Use curl against the public base URL and confirm expected status codes and
 JSON content types:
 
 ```bash
-curl -sS -D - -o /dev/null https://api.example.com/api/v1/integration/ping/
+curl -sS -D - -o /dev/null https://api.example.com/api/v1/integrations/ping/
 curl -sS -D - -o /dev/null \
   -H "X-API-Key: <api-key>" \
-  https://api.example.com/api/v1/integration/ping/
+  https://api.example.com/api/v1/integrations/ping/
 ```
 
 For Nextcloud HMAC checks, follow the signing instructions in
 `docs/security/nextcloud-hmac.md` and call
 `/api/v1/integrations/nextcloud/ping/`.
+
+Legacy aliases under `/api/v1/integration/` remain available but are
+deprecated.
 
 ## Proxy hardening recommendations
 
