@@ -8,15 +8,15 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import logging
 import time
-import uuid
 from dataclasses import dataclass
 from urllib.parse import parse_qsl, quote
 
 from django.conf import settings
 from django.core.cache import caches
 from rest_framework.request import Request
+
+from .config import IntegrationHMACConfigError, load_integration_hmac_clients
 
 NEXTCLOUD_CLIENT_ID_HEADER = "X-NC-CLIENT-ID"
 NEXTCLOUD_TIMESTAMP_HEADER = "X-NC-TIMESTAMP"
@@ -28,8 +28,6 @@ INTEGRATIONS_NONCE_HEADER = "X-Nonce"
 INTEGRATIONS_SIGNATURE_HEADER = "X-Signature"
 
 _RFC3986_SAFE = "-_.~"
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,9 +43,7 @@ class NextcloudHMACHeaders:
 class NextcloudHMACVerificationError(Exception):
     """Raised when a request fails Nextcloud HMAC verification."""
 
-    def __init__(
-        self, message: str, *, code: str = "invalid_signature"
-    ) -> None:
+    def __init__(self, message: str, *, code: str = "sig_mismatch") -> None:
         super().__init__(message)
         self.code = code
 
@@ -103,11 +99,11 @@ def build_canonical_string(
     )
 
 
-def compute_hmac_signature_hex(*, secret: str, canonical_string: str) -> str:
+def compute_hmac_signature_hex(*, secret: bytes, canonical_string: str) -> str:
     """Compute the expected hex HMAC-SHA256 signature."""
 
     digest = hmac.new(
-        secret.encode("utf-8"),
+        secret,
         canonical_string.encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
@@ -139,7 +135,7 @@ def _get_required_headers(request: Request) -> NextcloudHMACHeaders:
     except ValueError as exc:
         raise NextcloudHMACVerificationError(
             "Invalid Nextcloud timestamp header",
-            code="invalid_timestamp",
+            code="skew",
         ) from exc
 
     return NextcloudHMACHeaders(
@@ -154,72 +150,55 @@ def verify_nextcloud_hmac_request(
     request: Request,
     *,
     nonce_ttl_seconds: int | None = None,
+    allowed_methods: list[str] | tuple[str, ...] | None = None,
 ) -> str:
     """Verify request signature + replay protection; return `client_id`.
 
     Raises `NextcloudHMACVerificationError` on any verification failure.
+    `allowed_methods` is used to classify method-mismatch failures.
     """
 
     if not getattr(settings, "NEXTCLOUD_HMAC_ENABLED", True):
-        client_id = request.headers.get(NEXTCLOUD_CLIENT_ID_HEADER, "")
+        client_id = request.headers.get(INTEGRATIONS_CLIENT_ID_HEADER, "")
+        if not client_id:
+            client_id = request.headers.get(NEXTCLOUD_CLIENT_ID_HEADER, "")
         return client_id
 
     headers = _get_required_headers(request)
 
-    secrets_to_try: list[str] = []
-    matched_integration_client_previous_secret = False
-
-    integration_client_id: uuid.UUID | None = None
     try:
-        integration_client_id = uuid.UUID(headers.client_id)
-    except ValueError:
-        integration_client_id = None
+        clients = load_integration_hmac_clients()
+    except IntegrationHMACConfigError as exc:
+        raise NextcloudHMACVerificationError(
+            str(exc),
+            code=exc.code,
+        ) from exc
 
-    if integration_client_id is not None:
-        # Lazy import: avoid importing models at module import time.
-        from .models import IntegrationClient
-
-        integration_client = IntegrationClient.objects.filter(
-            client_id=integration_client_id
-        ).first()
-        if integration_client is not None:
-            if not integration_client.is_active:
-                raise NextcloudHMACVerificationError(
-                    "Integration client is disabled",
-                    code="client_disabled",
-                )
-            secrets_to_try = list(integration_client.candidate_secrets())
-
-    if not secrets_to_try:
-        clients: dict[str, str] = getattr(
-            settings, "NEXTCLOUD_HMAC_CLIENTS", {}
+    secret = clients.get(headers.client_id)
+    if secret is None:
+        raise NextcloudHMACVerificationError(
+            "Unknown Nextcloud client_id",
+            code="unknown_client",
         )
-        secret = clients.get(headers.client_id)
-        if secret is None:
-            raise NextcloudHMACVerificationError(
-                "Unknown Nextcloud client_id",
-                code="unknown_client_id",
-            )
-        secrets_to_try = [secret]
 
     now = int(time.time())
     max_skew = int(getattr(settings, "NEXTCLOUD_HMAC_MAX_SKEW_SECONDS", 300))
     if headers.timestamp - now > max_skew:
         raise NextcloudHMACVerificationError(
-            "Nextcloud timestamp too far in the future",
-            code="timestamp_too_new",
+            "Nextcloud timestamp outside skew window",
+            code="skew",
         )
     if now - headers.timestamp > max_skew:
         raise NextcloudHMACVerificationError(
-            "Nextcloud timestamp too old",
-            code="timestamp_too_old",
+            "Nextcloud timestamp outside skew window",
+            code="skew",
         )
 
     method = request.method
     if not method:
         raise NextcloudHMACVerificationError(
             "Invalid request method",
-            code="invalid_method",
+            code="method_mismatch",
         )
 
     canonical = build_canonical_string(
@@ -234,34 +213,108 @@ def verify_nextcloud_hmac_request(
         ),
     )
     expected_sig = compute_hmac_signature_hex(
-        secret=secrets_to_try[0],
+        secret=secret,
         canonical_string=canonical,
     )
-    if hmac.compare_digest(headers.signature, expected_sig):
-        matched_integration_client_previous_secret = False
-    else:
-        matched = False
-        for idx, candidate_secret in enumerate(secrets_to_try[1:], start=1):
+    if not hmac.compare_digest(headers.signature, expected_sig):
+        normalized_method = method.upper()
+
+        if allowed_methods:
+            for candidate_method in allowed_methods:
+                candidate = candidate_method.upper()
+                if candidate == normalized_method:
+                    continue
+                candidate_canonical = build_canonical_string(
+                    method=candidate,
+                    path=request.path,
+                    query_string=request.META.get("QUERY_STRING", ""),
+                    timestamp=headers.timestamp,
+                    nonce=headers.nonce,
+                    body_sha256=body_sha256_hex(
+                        method=candidate,
+                        body=request.body,
+                    ),
+                )
+                candidate_sig = compute_hmac_signature_hex(
+                    secret=secret,
+                    canonical_string=candidate_canonical,
+                )
+                if hmac.compare_digest(headers.signature, candidate_sig):
+                    raise NextcloudHMACVerificationError(
+                        "Nextcloud signature mismatch (method).",
+                        code="method_mismatch",
+                    )
+
+        path_variants: list[str] = []
+        if request.path.endswith("/"):
+            path_variants.append(request.path.rstrip("/"))
+        else:
+            path_variants.append(f"{request.path}/")
+        for candidate_path in path_variants:
+            candidate_canonical = build_canonical_string(
+                method=method,
+                path=candidate_path,
+                query_string=request.META.get("QUERY_STRING", ""),
+                timestamp=headers.timestamp,
+                nonce=headers.nonce,
+                body_sha256=body_sha256_hex(
+                    method=method,
+                    body=request.body,
+                ),
+            )
             candidate_sig = compute_hmac_signature_hex(
-                secret=candidate_secret,
-                canonical_string=canonical,
+                secret=secret,
+                canonical_string=candidate_canonical,
             )
             if hmac.compare_digest(headers.signature, candidate_sig):
-                matched = True
-                matched_integration_client_previous_secret = idx > 0
-                break
-        if not matched:
-            raise NextcloudHMACVerificationError(
-                "Invalid Nextcloud signature",
-                code="invalid_signature",
-            )
+                raise NextcloudHMACVerificationError(
+                    "Nextcloud signature mismatch (path).",
+                    code="path_mismatch",
+                )
 
-    if matched_integration_client_previous_secret:
-        logger.info(
-            "nextcloud_hmac.verified_with_previous_secret "
-            "client_id=%s path=%s",
-            headers.client_id,
-            request.path,
+        if normalized_method == "GET":
+            if request.body:
+                body_hash = hashlib.sha256(request.body).hexdigest()
+                candidate_canonical = build_canonical_string(
+                    method=method,
+                    path=request.path,
+                    query_string=request.META.get("QUERY_STRING", ""),
+                    timestamp=headers.timestamp,
+                    nonce=headers.nonce,
+                    body_sha256=body_hash,
+                )
+                candidate_sig = compute_hmac_signature_hex(
+                    secret=secret,
+                    canonical_string=candidate_canonical,
+                )
+                if hmac.compare_digest(headers.signature, candidate_sig):
+                    raise NextcloudHMACVerificationError(
+                        "Nextcloud signature mismatch (body hash).",
+                        code="body_hash_mismatch",
+                    )
+        else:
+            empty_body_hash = hashlib.sha256(b"").hexdigest()
+            candidate_canonical = build_canonical_string(
+                method=method,
+                path=request.path,
+                query_string=request.META.get("QUERY_STRING", ""),
+                timestamp=headers.timestamp,
+                nonce=headers.nonce,
+                body_sha256=empty_body_hash,
+            )
+            candidate_sig = compute_hmac_signature_hex(
+                secret=secret,
+                canonical_string=candidate_canonical,
+            )
+            if hmac.compare_digest(headers.signature, candidate_sig):
+                raise NextcloudHMACVerificationError(
+                    "Nextcloud signature mismatch (body hash).",
+                    code="body_hash_mismatch",
+                )
+
+        raise NextcloudHMACVerificationError(
+            "Invalid Nextcloud signature",
+            code="sig_mismatch",
         )
 
     cache_alias = str(
@@ -278,7 +331,7 @@ def verify_nextcloud_hmac_request(
     if not cache.add(cache_key, 1, timeout=nonce_ttl):
         raise NextcloudHMACVerificationError(
             "Nextcloud nonce replay detected",
-            code="nonce_replay",
+            code="replay",
         )
 
     return headers.client_id

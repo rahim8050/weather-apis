@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+import json
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -18,17 +21,19 @@ from integrations.hmac import (
     build_canonical_string,
     compute_hmac_signature_hex,
 )
-from integrations.models import IntegrationClient
 
 User = get_user_model()
-TEST_SHARED_SECRET = "test-integration-secret"  # noqa: S105  # nosec B105
-TEST_UNKNOWN_SHARED_KEY = "test-unknown-key"
+TEST_CLIENT_ID = "11111111-1111-1111-1111-111111111111"
+TEST_SHARED_SECRET = b"test-integration-secret"  # noqa: S105  # nosec B105
+TEST_SHARED_SECRET_B64 = base64.b64encode(TEST_SHARED_SECRET).decode("ascii")
+TEST_HMAC_CLIENTS_JSON = json.dumps({TEST_CLIENT_ID: TEST_SHARED_SECRET_B64})
+TEST_UNKNOWN_SHARED_KEY = b"test-unknown-key"
 BEARER_TOKEN_TYPE = "Bearer"  # noqa: S105  # nosec B105
 
 
 def _signature_for_request(
     *,
-    shared_secret: str,
+    shared_secret: bytes,
     method: str,
     path: str,
     query_string: str,
@@ -84,6 +89,12 @@ def _hmac_headers(
     }
 
 
+@pytest.fixture(autouse=True)
+def _integration_hmac_config(settings: Any) -> None:
+    settings.INTEGRATION_HMAC_CLIENTS_JSON = TEST_HMAC_CLIENTS_JSON
+    settings.INTEGRATION_LEGACY_CONFIG_ALLOWED = True
+
+
 @pytest.mark.django_db
 def test_integration_token_mint_success() -> None:
     caches["default"].clear()
@@ -92,10 +103,7 @@ def test_integration_token_mint_success() -> None:
     client = APIClient()
     api_key, key_id, user_id = _create_api_key(client)
     shared_secret = TEST_SHARED_SECRET
-    integration_client = IntegrationClient.objects.create(
-        name="Nextcloud",
-        secret=shared_secret,
-    )
+    client_id = TEST_CLIENT_ID
 
     now = 1_700_000_000
     nonce = "nonce-1"
@@ -111,7 +119,7 @@ def test_integration_token_mint_success() -> None:
     )
 
     headers = _hmac_headers(
-        client_id=str(integration_client.client_id),
+        client_id=client_id,
         timestamp=now,
         nonce=nonce,
         signature=signature,
@@ -147,15 +155,11 @@ def test_integration_token_invalid_signature_denied() -> None:
 
     client = APIClient()
     api_key, _, _ = _create_api_key(client)
-    shared_secret = TEST_SHARED_SECRET
-    integration_client = IntegrationClient.objects.create(
-        name="Nextcloud",
-        secret=shared_secret,
-    )
+    client_id = TEST_CLIENT_ID
 
     now = 1_700_000_000
     headers = _hmac_headers(
-        client_id=str(integration_client.client_id),
+        client_id=client_id,
         timestamp=now,
         nonce="nonce-bad",
         signature="deadbeef",
@@ -172,7 +176,7 @@ def test_integration_token_invalid_signature_denied() -> None:
 
     assert resp.status_code == status.HTTP_403_FORBIDDEN
     assert resp.json()["status"] == 1
-    assert resp.json()["errors"]["code"] == "invalid_signature"
+    assert resp.json()["errors"]["code"] == "sig_mismatch"
 
 
 @pytest.mark.django_db
@@ -202,10 +206,7 @@ def test_integration_token_requires_api_key() -> None:
 
     client = APIClient()
     shared_secret = TEST_SHARED_SECRET
-    integration_client = IntegrationClient.objects.create(
-        name="Nextcloud",
-        secret=shared_secret,
-    )
+    client_id = TEST_CLIENT_ID
 
     now = 1_700_000_000
     nonce = "nonce-no-key"
@@ -220,7 +221,7 @@ def test_integration_token_requires_api_key() -> None:
         body=b"",
     )
     headers = _hmac_headers(
-        client_id=str(integration_client.client_id),
+        client_id=client_id,
         timestamp=now,
         nonce=nonce,
         signature=signature,
@@ -249,10 +250,7 @@ def test_integration_token_invalid_api_key_denied() -> None:
 
     client = APIClient()
     shared_secret = TEST_SHARED_SECRET
-    integration_client = IntegrationClient.objects.create(
-        name="Nextcloud",
-        secret=shared_secret,
-    )
+    client_id = TEST_CLIENT_ID
 
     now = 1_700_000_000
     nonce = "nonce-bad-key"
@@ -267,7 +265,7 @@ def test_integration_token_invalid_api_key_denied() -> None:
         body=b"",
     )
     headers = _hmac_headers(
-        client_id=str(integration_client.client_id),
+        client_id=client_id,
         timestamp=now,
         nonce=nonce,
         signature=signature,
@@ -295,10 +293,7 @@ def test_integration_token_replay_nonce_denied() -> None:
     client = APIClient()
     api_key, _, _ = _create_api_key(client)
     shared_secret = TEST_SHARED_SECRET
-    integration_client = IntegrationClient.objects.create(
-        name="Nextcloud",
-        secret=shared_secret,
-    )
+    client_id = TEST_CLIENT_ID
 
     now = 1_700_000_000
     nonce = "nonce-replay"
@@ -312,7 +307,7 @@ def test_integration_token_replay_nonce_denied() -> None:
         body=b"",
     )
     headers = _hmac_headers(
-        client_id=str(integration_client.client_id),
+        client_id=client_id,
         timestamp=now,
         nonce=nonce,
         signature=signature,
@@ -336,7 +331,7 @@ def test_integration_token_replay_nonce_denied() -> None:
     assert first.status_code == status.HTTP_200_OK, first.content
     assert second.status_code == status.HTTP_403_FORBIDDEN, second.content
     assert second.json()["status"] == 1
-    assert second.json()["errors"]["code"] == "nonce_replay"
+    assert second.json()["errors"]["code"] == "replay"
 
 
 @pytest.mark.django_db
@@ -347,10 +342,7 @@ def test_integration_token_old_timestamp_denied() -> None:
     client = APIClient()
     api_key, _, _ = _create_api_key(client)
     shared_secret = TEST_SHARED_SECRET
-    integration_client = IntegrationClient.objects.create(
-        name="Nextcloud",
-        secret=shared_secret,
-    )
+    client_id = TEST_CLIENT_ID
 
     now = 1_700_000_000
     timestamp = now - 301
@@ -364,7 +356,7 @@ def test_integration_token_old_timestamp_denied() -> None:
         body=b"",
     )
     headers = _hmac_headers(
-        client_id=str(integration_client.client_id),
+        client_id=client_id,
         timestamp=timestamp,
         nonce="nonce-old",
         signature=signature,
@@ -381,7 +373,7 @@ def test_integration_token_old_timestamp_denied() -> None:
 
     assert resp.status_code == status.HTTP_403_FORBIDDEN
     assert resp.json()["status"] == 1
-    assert resp.json()["errors"]["code"] == "timestamp_too_old"
+    assert resp.json()["errors"]["code"] == "skew"
 
 
 @pytest.mark.django_db
@@ -392,10 +384,7 @@ def test_integration_token_future_timestamp_denied() -> None:
     client = APIClient()
     api_key, _, _ = _create_api_key(client)
     shared_secret = TEST_SHARED_SECRET
-    integration_client = IntegrationClient.objects.create(
-        name="Nextcloud",
-        secret=shared_secret,
-    )
+    client_id = TEST_CLIENT_ID
 
     now = 1_700_000_000
     timestamp = now + 301
@@ -409,7 +398,7 @@ def test_integration_token_future_timestamp_denied() -> None:
         body=b"",
     )
     headers = _hmac_headers(
-        client_id=str(integration_client.client_id),
+        client_id=client_id,
         timestamp=timestamp,
         nonce="nonce-future",
         signature=signature,
@@ -426,7 +415,7 @@ def test_integration_token_future_timestamp_denied() -> None:
 
     assert resp.status_code == status.HTTP_403_FORBIDDEN
     assert resp.json()["status"] == 1
-    assert resp.json()["errors"]["code"] == "timestamp_too_new"
+    assert resp.json()["errors"]["code"] == "skew"
 
 
 @pytest.mark.django_db
@@ -465,21 +454,18 @@ def test_integration_token_unknown_client_denied() -> None:
 
     assert resp.status_code == status.HTTP_403_FORBIDDEN
     assert resp.json()["status"] == 1
-    assert resp.json()["errors"]["code"] == "unknown_client_id"
+    assert resp.json()["errors"]["code"] == "unknown_client"
 
 
 @pytest.mark.django_db
-def test_integration_token_tampered_body_denied() -> None:
+def test_integration_token_body_hash_mismatch_denied() -> None:
     caches["default"].clear()
     caches["throttle"].clear()
 
     client = APIClient()
     api_key, _, _ = _create_api_key(client)
     shared_secret = TEST_SHARED_SECRET
-    integration_client = IntegrationClient.objects.create(
-        name="Nextcloud",
-        secret=shared_secret,
-    )
+    client_id = TEST_CLIENT_ID
 
     now = 1_700_000_000
     signature = _signature_for_request(
@@ -489,10 +475,10 @@ def test_integration_token_tampered_body_denied() -> None:
         query_string="",
         timestamp=now,
         nonce="nonce-body",
-        body=b'{"a":1}',
+        body=b"",
     )
     headers = _hmac_headers(
-        client_id=str(integration_client.client_id),
+        client_id=client_id,
         timestamp=now,
         nonce="nonce-body",
         signature=signature,
@@ -509,7 +495,7 @@ def test_integration_token_tampered_body_denied() -> None:
 
     assert resp.status_code == status.HTTP_403_FORBIDDEN
     assert resp.json()["status"] == 1
-    assert resp.json()["errors"]["code"] == "invalid_signature"
+    assert resp.json()["errors"]["code"] == "body_hash_mismatch"
 
 
 @pytest.mark.django_db
@@ -520,10 +506,7 @@ def test_integration_token_allows_whoami() -> None:
     client = APIClient()
     api_key, _, user_id = _create_api_key(client)
     shared_secret = TEST_SHARED_SECRET
-    integration_client = IntegrationClient.objects.create(
-        name="Nextcloud",
-        secret=shared_secret,
-    )
+    client_id = TEST_CLIENT_ID
 
     now = 1_700_000_000
     nonce = "nonce-whoami"
@@ -537,7 +520,7 @@ def test_integration_token_allows_whoami() -> None:
         body=b"",
     )
     headers = _hmac_headers(
-        client_id=str(integration_client.client_id),
+        client_id=client_id,
         timestamp=now,
         nonce=nonce,
         signature=signature,

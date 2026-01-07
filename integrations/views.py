@@ -5,7 +5,8 @@ service-to-service integration flows. Bootstrap endpoints use API key + HMAC to
 mint short-lived integration JWTs; session endpoints may require JWT-only.
 Global defaults remain JWT + API key.
 
-Admin-only endpoints are provided for managing HMAC integration clients.
+Admin-only endpoints are provided for managing legacy integration clients;
+HMAC verification uses INTEGRATION_HMAC_CLIENTS_JSON.
 
 All successful responses from these endpoints use the project envelope produced
 by `config.api.responses.success_response`:
@@ -29,8 +30,8 @@ from drf_spectacular.utils import (
     inline_serializer,
 )
 from rest_framework import serializers, status
-from rest_framework.decorators import action
-from rest_framework.permissions import IsAdminUser, IsAuthenticated
+from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.settings import api_settings
@@ -647,3 +648,20 @@ class IntegrationClientViewSet(ModelViewSet):
             ),
         }
         return success_response(data, message="Secret rotated")
+
+
+@api_view(["GET"])
+@permission_classes(
+    [AllowAny]
+)  # TEMP: see headers presence; revert after debugging
+def debug_ping_headers(request: Request) -> Response:
+    want = [
+        "X-Client-Id",
+        "X-NC-CLIENT-ID",
+        "X-NC-TIMESTAMP",
+        "X-NC-NONCE",
+        "X-NC-SIGNATURE",
+    ]
+    got = {k: (request.headers.get(k) is not None) for k in want}
+    logger.warning("PING header presence: %s", got)
+    return Response({"ok": True, "headers_present": got})

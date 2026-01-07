@@ -227,14 +227,14 @@ Ping endpoint (HMAC-only, no JWT/API key):
 
 #### Integration clients (admin-only)
 
-Admin endpoints (JWT + `IsAdminUser`) for managing HMAC clients:
+Legacy admin endpoints (JWT + `IsAdminUser`) for IntegrationClient metadata:
 - POST `/api/v1/integrations/clients/` → creates a client and returns the secret once
 - POST `/api/v1/integrations/clients/{id}/rotate-secret/` → rotates and returns the new secret once
 - GET/PATCH `/api/v1/integrations/clients/{id}/` → no secret fields are ever returned
 
-Secret rotation supports an overlap window: during the overlap, both the active
-and previous secret are accepted for HMAC verification. Configure the overlap
-TTL via `INTEGRATIONS_HMAC_PREVIOUS_TTL_SECONDS` (default: 72 hours).
+HMAC verification uses `INTEGRATION_HMAC_CLIENTS_JSON` as the source of truth.
+Rotate by updating `INTEGRATION_HMAC_CLIENTS_JSON` and Nextcloud config, keeping
+the old entry during cutover.
 
 Required headers:
 - `X-Client-Id` (preferred) or `X-NC-CLIENT-ID` (deprecated alias)
@@ -248,10 +248,10 @@ Canonical string (newline-separated):
 Environment variables (from code: `config/settings.py`):
 - `NEXTCLOUD_HMAC_ENABLED` (default `True`)
 - `NEXTCLOUD_HMAC_MAX_SKEW_SECONDS` (default `300`)
-- `NEXTCLOUD_HMAC_NONCE_TTL_SECONDS` (default `300`)
+- `NEXTCLOUD_HMAC_NONCE_TTL_SECONDS` (default `360`)
 - `NEXTCLOUD_HMAC_CACHE_ALIAS` (default `default`)
-- `NEXTCLOUD_HMAC_CLIENTS_JSON` (JSON map of `client_id -> shared_secret`)
-- `INTEGRATIONS_HMAC_PREVIOUS_TTL_SECONDS` (rotation overlap window)
+- `INTEGRATION_HMAC_CLIENTS_JSON` (JSON map of `client_id -> secret_b64`)
+- `INTEGRATION_LEGACY_CONFIG_ALLOWED` (default `False`)
 
 Full contract, examples, and guidance for endpoint protection (v1/v2) live in
 `docs/security/nextcloud-hmac.md`.
@@ -260,9 +260,9 @@ Minimal local signing example (placeholders only):
 
 ```bash
 python - <<'PY'
-import hashlib, hmac
+import base64, hashlib, hmac
 
-secret = "<shared-secret>"
+secret = base64.b64decode("<base64-secret>")
 method = "GET"
 path = "/api/v1/integrations/nextcloud/ping/"
 canonical_query = ""
@@ -271,7 +271,7 @@ nonce = "<uuid>"
 body_sha256 = hashlib.sha256(b"").hexdigest()
 
 canonical = "\n".join([method, path, canonical_query, str(timestamp), nonce, body_sha256])
-print(hmac.new(secret.encode(), canonical.encode(), hashlib.sha256).hexdigest())
+print(hmac.new(secret, canonical.encode(), hashlib.sha256).hexdigest())
 PY
 ```
 

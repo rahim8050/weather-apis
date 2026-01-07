@@ -11,11 +11,14 @@ It provides:
 This is an **additional layer** that composes with existing JWT and API key
 authentication; it does not replace them.
 
+Unified contract reference: `docs/integration_auth.md`.
+
 ## Contract
 
 ### Required headers
 
-- `X-NC-CLIENT-ID`: public identifier for a Nextcloud instance
+- `X-Client-Id`: preferred client identifier (case-sensitive)
+- `X-NC-CLIENT-ID`: legacy alias (still accepted)
 - `X-NC-TIMESTAMP`: unix seconds (integer)
 - `X-NC-NONCE`: unique random string/UUID per request
 - `X-NC-SIGNATURE`: hex HMAC-SHA256 over the canonical string
@@ -90,10 +93,14 @@ All configuration is environment-driven (from code: `config/settings.py`):
 - `NEXTCLOUD_HMAC_MAX_SKEW_SECONDS` (default `300`)
 - `NEXTCLOUD_HMAC_NONCE_TTL_SECONDS` (default `360`)
 - `NEXTCLOUD_HMAC_CACHE_ALIAS` (default `default`)
-- `NEXTCLOUD_HMAC_CLIENTS_JSON`:
-  - stringified JSON mapping `client_id -> shared_secret`
+- `INTEGRATION_HMAC_CLIENTS_JSON`:
+  - stringified JSON mapping `client_id -> secret_b64`
+  - `secret_b64` must be strict base64; decoded bytes are used for HMAC
   - example (placeholders only):
-    - `{"nc-dev-1":"<shared-secret>","nc-prod-1":"<shared-secret>"}`
+    - `{"<uuid-client-id>":"<base64-secret>"}`
+- `INTEGRATION_LEGACY_CONFIG_ALLOWED` (default `False`):
+  - when `False`, presence of legacy `NEXTCLOUD_HMAC_CLIENTS_JSON` causes a
+    hard failure until removed
 
 Never commit shared secrets; set them via environment variables or a secrets
 manager.
@@ -104,7 +111,8 @@ This vector is intended to be deterministic across Python and PHP and is
 validated by tests in this repo (`tests/test_integrations_nextcloud_hmac.py`).
 
 Inputs:
-- Secret: `test-shared-secret`
+- Secret (decoded): `test-shared-secret`
+- `INTEGRATION_HMAC_CLIENTS_JSON` value: `{"<client-id>":"dGVzdC1zaGFyZWQtc2VjcmV0"}`
 - METHOD: `GET`
 - PATH: `/api/v1/integrations/nextcloud/ping/`
 - Raw query: `a=2&b=two%20words&plus=%2B&a=1`
@@ -184,24 +192,16 @@ Environment variables (from code: `config/settings.py`):
 - `SIMPLE_JWT_ISSUER` (default `weather-apis`)
 - `SIMPLE_JWT_AUDIENCE` (default `nextcloud`)
 
-## Integration clients + secret rotation
+## Integration clients (legacy) + rotation strategy
 
-Admin-only endpoints under `/api/v1/integrations/clients/` (legacy `/api/v1/integration/clients/` aliases are
-deprecated) let operators manage the UUID-based `X-Client-Id` records:
+Admin-only endpoints under `/api/v1/integrations/clients/` remain for legacy
+metadata, but HMAC verification uses `INTEGRATION_HMAC_CLIENTS_JSON` as the
+source of truth. Do not rely on IntegrationClient secrets for request signing.
 
-- `POST /clients/` – create a client; response returns `{ "client_id": "<uuid>", "client_secret": "<secret>" }`
-  and the secret is shown only once. Store that secret in the Nextcloud instance configuration.
-- `GET /clients/` / `GET /clients/{id}/` – list or read client metadata; secrets (active or previous) are never exposed.
-- `PATCH /clients/{id}/` – update `name` and `is_active` to deactivate a client without rotating secrets.
-- `POST /clients/{id}/rotate-secret/` – rotate a client's secret, return the new secret once, and keep the previous secret valid
-  for `INTEGRATIONS_HMAC_PREVIOUS_TTL_SECONDS` seconds (default 72 hours).\`
-
-During rotation, the verifier accepts both the active and still-valid previous secret (overlap window) so deployments
-can roll credentials without breaking in-flight requests. When the overlap TTL expires, the previous secret is rejected
-and `NextcloudHMACPermission` logs the event (`integration_client.secret_rotated` + `nextcloud_hmac.verified_with_previous_secret`).
-
-Configure the overlap window with `INTEGRATIONS_HMAC_PREVIOUS_TTL_SECONDS`; choose a duration that covers your
-deployment's propagation time but keeps old secrets retired soon after.
+Rotation strategy for `INTEGRATION_HMAC_CLIENTS_JSON`:
+- add a new `client_id -> secret_b64` entry (keep the old entry temporarily)
+- update Nextcloud to use the new `client_id` and secret
+- remove the old entry once requests are confirmed on the new client_id
 
 ## Composing HMAC with existing auth (Option B)
 
@@ -228,14 +228,22 @@ authenticate v2 endpoints.
 
 ## Troubleshooting (common 403 causes)
 
-- Missing one or more required headers.
-- Unknown `X-NC-CLIENT-ID` (not present in `NEXTCLOUD_HMAC_CLIENTS_JSON`).
-- Clock skew: `X-NC-TIMESTAMP` outside `NEXTCLOUD_HMAC_MAX_SKEW_SECONDS`.
-- Nonce replay: `X-NC-NONCE` reused within `NEXTCLOUD_HMAC_NONCE_TTL_SECONDS`.
-- Canonicalization mismatch:
-  - `PATH` must match exactly (including trailing slash).
-  - `CANONICAL_QUERY` must:
-    - decode with form semantics (`+` becomes space)
-    - re-encode with RFC3986 (spaces become `%20`, never `+`)
-    - sort by `(encoded_key, encoded_value)` (ASCII)
-  - `BODY_SHA256` must be computed from the exact raw bytes sent on the wire.
+Inspect `errors.code` in the response:
+- `missing_headers`: required signature headers are missing.
+- `missing_config` / `bad_json`: `INTEGRATION_HMAC_CLIENTS_JSON` missing/invalid.
+- `bad_base64`: `secret_b64` is not strict base64.
+- `unknown_client`: `X-Client-Id` not present in `INTEGRATION_HMAC_CLIENTS_JSON`.
+- `sig_mismatch`: canonical string mismatch or wrong secret.
+- `body_hash_mismatch`: body hash does not match the raw bytes sent.
+- `path_mismatch`: signed path differs (often trailing slash or proxy rewrite).
+- `method_mismatch`: signed method differs from request method.
+- `skew`: `X-NC-TIMESTAMP` outside `NEXTCLOUD_HMAC_MAX_SKEW_SECONDS`.
+- `replay`: nonce reused within `NEXTCLOUD_HMAC_NONCE_TTL_SECONDS`.
+
+Canonicalization mismatches are the most common cause:
+- `PATH` must match exactly (including trailing slash).
+- `CANONICAL_QUERY` must:
+  - decode with form semantics (`+` becomes space)
+  - re-encode with RFC3986 (spaces become `%20`, never `+`)
+  - sort by `(encoded_key, encoded_value)` (ASCII)
+- `BODY_SHA256` must be computed from the exact raw bytes sent on the wire.

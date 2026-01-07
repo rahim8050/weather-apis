@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import json
 from typing import Any, TypedDict, cast
 from unittest.mock import patch
 
@@ -18,8 +20,10 @@ from integrations.hmac import (
     compute_hmac_signature_hex,
 )
 
-_TEST_SIGNING_KEY = "test-signing-key"
-_KNOWN_GOOD_SIGNING_KEY = "test-shared-secret"
+_TEST_SIGNING_KEY = b"test-signing-key"
+_TEST_SIGNING_KEY_B64 = base64.b64encode(_TEST_SIGNING_KEY).decode("ascii")
+_TEST_CLIENTS_JSON = json.dumps({"nc-test-1": _TEST_SIGNING_KEY_B64})
+_KNOWN_GOOD_SIGNING_KEY = b"test-shared-secret"
 _KNOWN_GOOD_SIGNATURE = (
     "60a6b6568842ac371ba78655d6788e841d61b251dc75157d0dfe4a39f57cc362"
 )
@@ -42,7 +46,7 @@ class _NCHeaders(TypedDict):
 
 def _signature_for_request(
     *,
-    shared_secret: str,
+    shared_secret: bytes,
     method: str,
     path: str,
     query_string: str,
@@ -119,7 +123,8 @@ class NextcloudHMACContractTests(SimpleTestCase):
     NEXTCLOUD_HMAC_MAX_SKEW_SECONDS=300,
     NEXTCLOUD_HMAC_NONCE_TTL_SECONDS=360,
     NEXTCLOUD_HMAC_CACHE_ALIAS="default",
-    NEXTCLOUD_HMAC_CLIENTS={"nc-test-1": _TEST_SIGNING_KEY},
+    INTEGRATION_HMAC_CLIENTS_JSON=_TEST_CLIENTS_JSON,
+    INTEGRATION_LEGACY_CONFIG_ALLOWED=True,
 )
 class NextcloudHMACTests(APITestCase):
     ping_url = "/api/v1/integrations/nextcloud/ping/"
@@ -164,7 +169,7 @@ class NextcloudHMACTests(APITestCase):
             )
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(resp.json()["status"], 1)
-        self.assertEqual(resp.json()["errors"]["code"], "unknown_client_id")
+        self.assertEqual(resp.json()["errors"]["code"], "unknown_client")
 
     def test_invalid_signature_denied(self) -> None:
         now = 1_700_000_000
@@ -180,7 +185,7 @@ class NextcloudHMACTests(APITestCase):
             )
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(resp.json()["status"], 1)
-        self.assertEqual(resp.json()["errors"]["code"], "invalid_signature")
+        self.assertEqual(resp.json()["errors"]["code"], "sig_mismatch")
 
     def test_valid_signature_returns_client_id(self) -> None:
         now = 1_700_000_000
@@ -257,7 +262,7 @@ class NextcloudHMACTests(APITestCase):
         self.assertEqual(first.status_code, status.HTTP_200_OK)
         self.assertEqual(second.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(second.json()["status"], 1)
-        self.assertEqual(second.json()["errors"]["code"], "nonce_replay")
+        self.assertEqual(second.json()["errors"]["code"], "replay")
 
     def test_old_timestamp_denied(self) -> None:
         now = 1_700_000_000
@@ -283,7 +288,7 @@ class NextcloudHMACTests(APITestCase):
             )
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(resp.json()["status"], 1)
-        self.assertEqual(resp.json()["errors"]["code"], "timestamp_too_old")
+        self.assertEqual(resp.json()["errors"]["code"], "skew")
 
     def test_future_timestamp_denied(self) -> None:
         now = 1_700_000_000
@@ -309,7 +314,7 @@ class NextcloudHMACTests(APITestCase):
             )
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(resp.json()["status"], 1)
-        self.assertEqual(resp.json()["errors"]["code"], "timestamp_too_new")
+        self.assertEqual(resp.json()["errors"]["code"], "skew")
 
     def test_canonical_query_ordering_validates(self) -> None:
         now = 1_700_000_000
@@ -334,6 +339,54 @@ class NextcloudHMACTests(APITestCase):
             )
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.json()["data"]["client_id"], "nc-test-1")
+
+    def test_path_mismatch_returns_code(self) -> None:
+        now = 1_700_000_000
+        nonce = "nonce-path"
+        signature = _signature_for_request(
+            shared_secret=_TEST_SIGNING_KEY,
+            method="GET",
+            path="/api/v1/integrations/nextcloud/ping",
+            query_string="",
+            timestamp=now,
+            nonce=nonce,
+        )
+        with patch("integrations.hmac.time.time", return_value=now):
+            resp = self.client.get(
+                self.ping_url,
+                **self._headers(
+                    client_id="nc-test-1",
+                    timestamp=now,
+                    nonce=nonce,
+                    signature=signature,
+                ),
+            )
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(resp.json()["errors"]["code"], "path_mismatch")
+
+    def test_method_mismatch_returns_code(self) -> None:
+        now = 1_700_000_000
+        nonce = "nonce-method"
+        signature = _signature_for_request(
+            shared_secret=_TEST_SIGNING_KEY,
+            method="HEAD",
+            path=self.ping_url,
+            query_string="",
+            timestamp=now,
+            nonce=nonce,
+        )
+        with patch("integrations.hmac.time.time", return_value=now):
+            resp = self.client.get(
+                self.ping_url,
+                **self._headers(
+                    client_id="nc-test-1",
+                    timestamp=now,
+                    nonce=nonce,
+                    signature=signature,
+                ),
+            )
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(resp.json()["errors"]["code"], "method_mismatch")
 
     @override_settings(
         REST_FRAMEWORK={
@@ -390,3 +443,37 @@ class NextcloudHMACTests(APITestCase):
         self.assertIn("wait", payload["errors"])
         retry_after = second.get("Retry-After")
         self.assertIsNotNone(retry_after)
+
+
+@override_settings(
+    NEXTCLOUD_HMAC_ENABLED=True,
+    NEXTCLOUD_HMAC_MAX_SKEW_SECONDS=300,
+    NEXTCLOUD_HMAC_NONCE_TTL_SECONDS=360,
+    NEXTCLOUD_HMAC_CACHE_ALIAS="default",
+    INTEGRATION_HMAC_CLIENTS_JSON='{"nc-test-1":"not-base64"}',
+    INTEGRATION_LEGACY_CONFIG_ALLOWED=True,
+)
+class NextcloudHMACConfigErrorTests(APITestCase):
+    ping_url = "/api/v1/integrations/nextcloud/ping/"
+
+    def test_bad_base64_denied(self) -> None:
+        now = 1_700_000_000
+        nonce = "nonce-b64"
+        signature = _signature_for_request(
+            shared_secret=_TEST_SIGNING_KEY,
+            method="GET",
+            path=self.ping_url,
+            query_string="",
+            timestamp=now,
+            nonce=nonce,
+        )
+        with patch("integrations.hmac.time.time", return_value=now):
+            resp = self.client.get(
+                self.ping_url,
+                HTTP_X_NC_CLIENT_ID="nc-test-1",
+                HTTP_X_NC_TIMESTAMP=str(now),
+                HTTP_X_NC_NONCE=nonce,
+                HTTP_X_NC_SIGNATURE=signature,
+            )
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(resp.json()["errors"]["code"], "bad_base64")

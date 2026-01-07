@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from unittest.mock import patch
 from uuid import UUID
 
 import pytest
@@ -13,36 +12,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import AccessToken
 
-from integrations.hmac import (
-    body_sha256_hex,
-    build_canonical_string,
-    compute_hmac_signature_hex,
-)
 from integrations.models import IntegrationClient
-
-
-def _signature_for_request(
-    *,
-    shared_secret: str,
-    method: str,
-    path: str,
-    query_string: str,
-    timestamp: int,
-    nonce: str,
-    body: bytes = b"",
-) -> str:
-    canonical = build_canonical_string(
-        method=method,
-        path=path,
-        query_string=query_string,
-        timestamp=timestamp,
-        nonce=nonce,
-        body_sha256=body_sha256_hex(method=method, body=body),
-    )
-    return compute_hmac_signature_hex(
-        secret=shared_secret,
-        canonical_string=canonical,
-    )
 
 
 def _auth_client(*, access_token: str) -> APIClient:
@@ -134,69 +104,23 @@ def test_integration_client_rotate_secret_supports_overlap_window() -> None:
     new_secret = rotated["client_secret"]
     assert new_secret != old_secret
     assert rotated["previous_valid_until"] is not None
-
-    ping_url = "/api/v1/integrations/nextcloud/ping/"
-    now = 1_700_000_000
-
-    old_sig = _signature_for_request(
-        shared_secret=old_secret,
-        method="GET",
-        path=ping_url,
-        query_string="",
-        timestamp=now,
-        nonce="nonce-old",
+    integration_client = IntegrationClient.objects.get(
+        pk=integration_client_pk
     )
-    with patch("integrations.hmac.time.time", return_value=now):
-        old_ping = client.get(
-            ping_url,
-            HTTP_X_CLIENT_ID=client_id,
-            HTTP_X_NC_TIMESTAMP=str(now),
-            HTTP_X_NC_NONCE="nonce-old",
-            HTTP_X_NC_SIGNATURE=old_sig,
-        )
-    assert old_ping.status_code == status.HTTP_200_OK, old_ping.content
-    assert old_ping.json()["data"]["client_id"] == client_id
-
-    new_sig = _signature_for_request(
-        shared_secret=new_secret,
-        method="GET",
-        path=ping_url,
-        query_string="",
-        timestamp=now,
-        nonce="nonce-new",
-    )
-    with patch("integrations.hmac.time.time", return_value=now):
-        new_ping = client.get(
-            ping_url,
-            HTTP_X_CLIENT_ID=client_id,
-            HTTP_X_NC_TIMESTAMP=str(now),
-            HTTP_X_NC_NONCE="nonce-new",
-            HTTP_X_NC_SIGNATURE=new_sig,
-        )
-    assert new_ping.status_code == status.HTTP_200_OK, new_ping.content
-    assert new_ping.json()["data"]["client_id"] == client_id
+    assert integration_client.client_id == UUID(client_id)
+    assert integration_client.secret == new_secret
+    assert integration_client.previous_secret == old_secret
+    assert integration_client.previous_expires_at is not None
+    assert list(integration_client.candidate_secrets()) == [
+        new_secret,
+        old_secret,
+    ]
 
     IntegrationClient.objects.filter(pk=integration_client_pk).update(
         previous_expires_at=timezone.now() - timedelta(seconds=1)
     )
-    expired_sig = _signature_for_request(
-        shared_secret=old_secret,
-        method="GET",
-        path=ping_url,
-        query_string="",
-        timestamp=now,
-        nonce="nonce-expired",
-    )
-    with patch("integrations.hmac.time.time", return_value=now):
-        expired_ping = client.get(
-            ping_url,
-            HTTP_X_CLIENT_ID=client_id,
-            HTTP_X_NC_TIMESTAMP=str(now),
-            HTTP_X_NC_NONCE="nonce-expired",
-            HTTP_X_NC_SIGNATURE=expired_sig,
-        )
-    assert expired_ping.status_code == status.HTTP_403_FORBIDDEN
-    assert expired_ping.json()["status"] == 1
+    expired_client = IntegrationClient.objects.get(pk=integration_client_pk)
+    assert list(expired_client.candidate_secrets()) == [new_secret]
 
 
 @pytest.mark.django_db
