@@ -12,6 +12,10 @@ from django.test import override_settings
 from farms.models import Farm
 from ndvi.engines.base import NdviPoint
 from ndvi.models import NdviJob, NdviObservation
+from ndvi.raster.sentinelhub_engine import (
+    MAX_ERROR_SNIPPET_CHARS,
+    SentinelHubRasterError,
+)
 from ndvi.tasks import (
     enqueue_daily_refresh,
     enqueue_weekly_gap_fill,
@@ -180,6 +184,76 @@ def test_run_ndvi_job_raster_pixel_limit_returns_invalid(
     assert result == "invalid"
     job.refresh_from_db()
     assert job.status == NdviJob.JobStatus.FAILED
+
+
+@pytest.mark.django_db
+def test_run_ndvi_job_raster_size_and_error_recorded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    password = secrets.token_urlsafe(12)
+    user = get_user_model().objects.create_user(
+        username="raster-error",
+        email="raster-error@example.com",
+        password=password,
+    )
+    farm = Farm.objects.create(
+        owner=user,
+        name="Farm",
+        slug="farm-error",
+        bbox_south=0.0,
+        bbox_west=0.0,
+        bbox_north=0.2,
+        bbox_east=0.2,
+        is_active=True,
+    )
+    job = NdviJob.objects.create(
+        owner=user,
+        farm=farm,
+        engine="sentinelhub",
+        job_type=NdviJob.JobType.RASTER_PNG,
+        start=date(2025, 1, 1),
+        end=date(2025, 1, 1),
+        step_days=256,
+        max_cloud=20,
+        request_hash="raster-error-hash",
+    )
+    captured: dict[str, int] = {}
+
+    snippet_text = "upstream bad request snippet..."
+
+    def fake_render_png(
+        *,
+        farm: object,
+        bbox: object,
+        day: object,
+        size: int,
+        max_cloud: object,
+        engine_name: object,
+    ) -> tuple[bytes, str]:
+        captured["size"] = size
+        raise SentinelHubRasterError(
+            status_code=400,
+            snippet=snippet_text,
+        )
+
+    monkeypatch.setattr("ndvi.tasks.acquire_lock", lambda *_, **__: True)
+    monkeypatch.setattr("ndvi.tasks.render_ndvi_png", fake_render_png)
+
+    with patch.object(
+        run_ndvi_job, "retry", side_effect=RuntimeError("retry")
+    ):
+        with pytest.raises(RuntimeError, match="retry"):
+            run_ndvi_job.apply(args=[job.id]).get()
+
+    job.refresh_from_db()
+    assert job.status == NdviJob.JobStatus.FAILED
+    assert captured["size"] == 256
+    assert job.last_error is not None
+    assert "status=400" in job.last_error
+    body = job.last_error.split("body=", 1)[1]
+    assert body == snippet_text
+    assert body.endswith("...")
+    assert len(body) <= MAX_ERROR_SNIPPET_CHARS + 3
 
 
 @pytest.mark.django_db

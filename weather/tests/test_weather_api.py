@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 # ruff: noqa: S101
-import asyncio
 import secrets
 from datetime import UTC, date, datetime
 
@@ -55,7 +54,7 @@ def test_weather_current_view_success(
     )
     force_authenticate(django_request, user=user)
     request = Request(django_request)
-    resp = asyncio.run(WeatherCurrentView().get(request))
+    resp = WeatherCurrentView().get(request)
     assert resp.status_code == 200
     assert resp.data["status"] == 0
     assert resp.data["data"]["temperature_c"] == 22.0
@@ -106,7 +105,7 @@ def test_weather_daily_view_success(
     )
     force_authenticate(django_request, user=user)
     request = Request(django_request)
-    resp = asyncio.run(WeatherDailyView().get(request))
+    resp = WeatherDailyView().get(request)
     assert resp.status_code == 200
     assert resp.data["status"] == 0
     assert len(resp.data["data"]["forecasts"]) == 1
@@ -165,7 +164,7 @@ def test_weather_weekly_view_success(
     )
     force_authenticate(django_request, user=user)
     request = Request(django_request)
-    resp = asyncio.run(WeatherWeeklyView().get(request))
+    resp = WeatherWeeklyView().get(request)
     assert resp.status_code == 200
     assert resp.data["status"] == 0
     assert len(resp.data["data"]["reports"]) == 1

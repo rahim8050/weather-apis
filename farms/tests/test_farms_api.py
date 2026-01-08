@@ -44,3 +44,32 @@ class FarmsApiTests(APITestCase):
         }
         res = self.client.post("/api/v1/farms/", bad, format="json")
         self.assertEqual(res.status_code, 400)
+
+    def test_invalid_area_ha_returns_400(self) -> None:
+        self.client.force_authenticate(user=self.user1)
+        payload = {"name": "Bad Area", "area_ha": "-"}
+        res = self.client.post("/api/v1/farms/", payload, format="json")
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("area_ha", res.json()["errors"])
+
+    def test_out_of_range_bbox_returns_400(self) -> None:
+        self.client.force_authenticate(user=self.user1)
+        payload = {
+            "name": "Out of Range",
+            "bbox_south": -91.0,
+            "bbox_west": 36.0,
+            "bbox_north": 0.5,
+            "bbox_east": 37.0,
+        }
+        res = self.client.post("/api/v1/farms/", payload, format="json")
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("bbox_south", res.json()["errors"])
+
+    def test_duplicate_name_returns_400(self) -> None:
+        self.client.force_authenticate(user=self.user1)
+        payload = {"name": "Farm Duplicate"}
+        first = self.client.post("/api/v1/farms/", payload, format="json")
+        self.assertEqual(first.status_code, 201)
+        second = self.client.post("/api/v1/farms/", payload, format="json")
+        self.assertEqual(second.status_code, 400)
+        self.assertIn("name", second.json()["errors"])

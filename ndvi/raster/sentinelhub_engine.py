@@ -24,6 +24,20 @@ from .base import NdviRasterEngine, RasterRequest
 
 logger = logging.getLogger(__name__)
 
+MAX_ERROR_SNIPPET_CHARS = 1600
+
+
+class SentinelHubRasterError(RuntimeError):
+    """Signals a non-2xx raster request from Sentinel Hub."""
+
+    def __init__(self, status_code: int | None, snippet: str | None) -> None:
+        self.status_code = status_code
+        self.snippet = snippet
+        message = f"Sentinel Hub raster error status={status_code}"
+        if snippet:
+            message = f"{message} body={snippet}"
+        super().__init__(message)
+
 
 RASTER_EVALSCRIPT: Final[str] = """
 //VERSION=3
@@ -140,6 +154,20 @@ class SentinelHubRasterEngine(NdviRasterEngine):
             },
         }
 
+    def _response_snippet(self, response: httpx.Response | None) -> str | None:
+        if response is None:
+            return None
+        try:
+            text = response.text.strip()
+        except Exception:
+            return None
+        if not text:
+            return None
+        normalized = " ".join(text.splitlines())
+        if len(normalized) > MAX_ERROR_SNIPPET_CHARS:
+            normalized = f"{normalized[:MAX_ERROR_SNIPPET_CHARS]}..."
+        return normalized
+
     def _request_with_retry(
         self,
         method: str,
@@ -165,10 +193,20 @@ class SentinelHubRasterEngine(NdviRasterEngine):
                 return response
             except httpx.HTTPStatusError as exc:
                 last_error = exc
-                if exc.response.status_code >= 500 and attempt < max_attempts:
-                    time.sleep(0.5 * attempt)
-                    continue
-                raise
+                status_code = (
+                    exc.response.status_code if exc.response else None
+                )
+                snippet = self._response_snippet(exc.response)
+                logger.warning(
+                    "Sentinel Hub raster upstream error status=%s body=%s",
+                    status_code,
+                    snippet or "<empty>",
+                )
+                if status_code is not None and status_code >= 500:
+                    if attempt < max_attempts:
+                        time.sleep(0.5 * attempt)
+                        continue
+                raise SentinelHubRasterError(status_code, snippet) from exc
             except httpx.RequestError as exc:
                 last_error = exc
                 if attempt < max_attempts:

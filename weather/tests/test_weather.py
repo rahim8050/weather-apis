@@ -14,7 +14,10 @@ from django.utils import timezone as dj_timezone
 from rest_framework.exceptions import ValidationError
 
 from weather.engines.base import WeatherProvider
-from weather.engines.nasa_power import NasaPowerProvider
+from weather.engines.nasa_power import (
+    NasaPowerProvider,
+    NasaPowerUpstreamError,
+)
 from weather.engines.open_meteo import OpenMeteoProvider
 from weather.engines.registry import validate_provider
 from weather.engines.types import (
@@ -124,6 +127,34 @@ def test_nasa_power_daily_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
     assert second.precipitation_mm == pytest.approx(5.0)
 
 
+def test_nasa_power_daily_request_params_use_local_dates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_request(
+        self: NasaPowerProvider, params: dict[str, object]
+    ) -> dict[str, object]:
+        captured.update(params)
+        return {
+            "properties": {"parameter": {}, "fill_value": -999},
+        }
+
+    monkeypatch.setattr(NasaPowerProvider, "_request", fake_request)
+    provider = NasaPowerProvider()
+    asyncio.run(
+        provider.daily(
+            Location(lat=1.0, lon=36.0, tz="Africa/Nairobi"),
+            date(2026, 1, 8),
+            date(2026, 1, 8),
+        )
+    )
+    assert captured["start"] == "20260108"
+    assert captured["end"] == "20260108"
+    assert captured["community"] == "AG"
+    assert captured["time-standard"] == "UTC"
+
+
 def test_open_meteo_daily_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_cache()
     payload: dict[str, object] = {
@@ -156,6 +187,51 @@ def test_open_meteo_daily_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
     assert forecast.t_max_c == pytest.approx(22.0)
     assert forecast.precipitation_mm == pytest.approx(0.5)
     assert forecast.source == "open_meteo"
+
+
+def test_open_meteo_daily_precipitation_maps_to_serialized_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_cache()
+    payload: dict[str, object] = {
+        "daily": {
+            "time": ["2025-06-01"],
+            "temperature_2m_min": [10.0],
+            "temperature_2m_max": [20.0],
+            "precipitation_sum": [2.5],
+        }
+    }
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> object:
+            return payload
+
+    class FakeAsyncClient:
+        async def __aenter__(self) -> FakeAsyncClient:
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        async def get(self, *_: object, **__: object) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_: FakeAsyncClient())
+    provider = OpenMeteoProvider(max_retries=0)
+    forecasts = asyncio.run(
+        provider.daily(
+            Location(lat=1.0, lon=36.0, tz="Africa/Nairobi"),
+            date(2025, 6, 1),
+            date(2025, 6, 1),
+        )
+    )
+    serialized = serialize_daily(forecasts)
+    assert serialized[0]["precipitation_mm"] == pytest.approx(2.5)
 
 
 def test_provider_switching_default_and_override(
@@ -617,6 +693,32 @@ def test_nasa_power_request_invalid_payload_raises(
     provider = NasaPowerProvider()
     with pytest.raises(ValueError, match="Unexpected NASA POWER"):
         asyncio.run(provider._request({"lat": 1.0}))
+
+
+def test_nasa_power_request_http_error_maps_to_upstream_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = httpx.Response(
+        status_code=422,
+        request=httpx.Request("GET", "https://example.com"),
+        text="bad request",
+    )
+
+    class FakeAsyncClient:
+        async def __aenter__(self) -> FakeAsyncClient:
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        async def get(self, *_: object, **__: object) -> httpx.Response:
+            return response
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_: FakeAsyncClient())
+    provider = NasaPowerProvider()
+    with pytest.raises(NasaPowerUpstreamError) as exc_info:
+        asyncio.run(provider._request({"lat": 1.0}))
+    assert exc_info.value.status_code == 502
 
 
 def test_nasa_power_helpers() -> None:

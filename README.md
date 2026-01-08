@@ -331,6 +331,6 @@ bandit -c pyproject.toml -r .
 - `accounts/`: user authentication and profile endpoints ([README](accounts/README.md))
 - `api_keys/`: API key model + authentication + JWT-only lifecycle endpoints ([README](api_keys/README.md))
 - `farms/`: user-owned farm resources ([README](farms/README.md))
-- `ndvi/`: NDVI retrieval (Sentinel Hub) + Celery tasks + raster support ([README](ndvi/README.md))
-- `weather/`: provider-swappable weather subsystem (Open-Meteo + NASA POWER) ([README](weather/README.md))
+- `ndvi/`: NDVI retrieval (Sentinel Hub) + Celery tasks + raster support ([README](ndvi/README.md), [engine guide](docs/contributing_ndvi_engines.md))
+- `weather/`: provider-swappable weather subsystem (Open-Meteo + NASA POWER) ([README](weather/README.md), [engine guide](docs/contributing_weather_engines.md))
 - `config/`: Django settings/urls/celery wiring

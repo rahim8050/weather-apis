@@ -70,12 +70,17 @@ def normalize_bbox(farm: Farm) -> BBox:
         or farm.bbox_east is None
     ):
         raise ValidationError("Farm must include a bounding box for NDVI.")
-    return BBox(
+    bbox = BBox(
         south=Decimal(farm.bbox_south),
         west=Decimal(farm.bbox_west),
         north=Decimal(farm.bbox_north),
         east=Decimal(farm.bbox_east),
     )
+    if bbox.west >= bbox.east or bbox.south >= bbox.north:
+        raise ValidationError(
+            "Farm bounding box must have west < east and south < north."
+        )
+    return bbox
 
 
 def _approx_area_km2(bbox: BBox) -> float:

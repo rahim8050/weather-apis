@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import os
 from collections.abc import Sequence
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, cast
@@ -8,10 +10,19 @@ from zoneinfo import ZoneInfo
 import httpx
 from django.conf import settings
 from django.utils import timezone as dj_timezone
+from rest_framework.exceptions import APIException
 
-from ..timeutils import ensure_aware, get_zone, local_day_bounds_to_utc
+from ..timeutils import ensure_aware, get_zone
 from .base import WeatherProvider
 from .types import CurrentWeather, DailyForecast, Location, ProviderName
+
+logger = logging.getLogger(__name__)
+
+
+class NasaPowerUpstreamError(APIException):
+    status_code = 502
+    default_detail = "NASA POWER upstream error"
+    default_code = "nasa_power_upstream_error"
 
 
 class NasaPowerProvider(WeatherProvider):
@@ -29,6 +40,7 @@ class NasaPowerProvider(WeatherProvider):
         *,
         base_url: str | None = None,
         timeout: float = 10.0,
+        community: str | None = None,
     ) -> None:
         self.base_url: str = base_url or cast(
             str,
@@ -39,6 +51,12 @@ class NasaPowerProvider(WeatherProvider):
             ),
         )
         self.timeout = timeout
+        self.community = (
+            community
+            or getattr(settings, "WEATHER_NASA_POWER_COMMUNITY", None)
+            or os.getenv("WEATHER_NASA_POWER_COMMUNITY")
+            or "AG"
+        )
 
     async def current(self, loc: Location) -> CurrentWeather:
         zone = get_zone(loc.tz)
@@ -64,14 +82,13 @@ class NasaPowerProvider(WeatherProvider):
         self, loc: Location, start: date, end: date
     ) -> Sequence[DailyForecast]:
         zone = get_zone(loc.tz)
-        start_utc, _ = local_day_bounds_to_utc(start, zone)
-        _, end_utc = local_day_bounds_to_utc(end, zone)
         params = {
             "latitude": loc.lat,
             "longitude": loc.lon,
-            "start": self._format_yyyymmdd(start_utc.date()),
-            "end": self._format_yyyymmdd(end_utc.date()),
+            "start": self._format_yyyymmdd(start),
+            "end": self._format_yyyymmdd(end),
             "time-standard": "UTC",
+            "community": self.community,
             "parameters": self._PARAMS,
             "format": "JSON",
         }
@@ -119,7 +136,17 @@ class NasaPowerProvider(WeatherProvider):
     async def _request(self, params: dict[str, Any]) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.get(self.base_url, params=params)
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            status_code = getattr(exc.response, "status_code", None)
+            body_snippet = self._response_snippet(exc.response)
+            logger.warning(
+                "NASA POWER upstream error: status=%s body=%s",
+                status_code,
+                body_snippet or "<empty>",
+            )
+            raise NasaPowerUpstreamError() from exc
         data = response.json()
         if not isinstance(data, dict):
             raise ValueError("Unexpected NASA POWER response shape")
@@ -165,3 +192,16 @@ class NasaPowerProvider(WeatherProvider):
 
     def _format_yyyymmdd(self, value: date) -> str:
         return value.strftime("%Y%m%d")
+
+    def _response_snippet(self, response: httpx.Response | None) -> str | None:
+        if response is None:
+            return None
+        try:
+            text = response.text.strip()
+        except Exception:
+            return None
+        if not text:
+            return None
+        if len(text) > 200:
+            return f"{text[:200]}..."
+        return text

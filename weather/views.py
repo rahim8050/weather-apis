@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import cast
 
+from asgiref.sync import async_to_sync
 from drf_spectacular.utils import (
     OpenApiParameter,
     OpenApiTypes,
@@ -112,7 +113,7 @@ class WeatherCurrentView(APIView):
             403: weather_error_schema,
         },
     )
-    async def get(self, request: Request) -> Response:
+    def get(self, request: Request) -> Response:
         """Return current conditions.
 
         Inputs: lat/lon (required), optional tz/provider.
@@ -124,7 +125,7 @@ class WeatherCurrentView(APIView):
         serializer.is_valid(raise_exception=True)
         params = serializer.validated_data
 
-        current = await get_current_weather(
+        current = async_to_sync(get_current_weather)(
             lat=float(params["lat"]),
             lon=float(params["lon"]),
             tz=str(params.get("tz") or DEFAULT_TZ),
@@ -191,7 +192,7 @@ class WeatherDailyView(APIView):
             403: weather_error_schema,
         },
     )
-    async def get(self, request: Request) -> Response:
+    def get(self, request: Request) -> Response:
         """Return daily data for the inclusive date range.
 
         Inputs: lat, lon, start/end dates (YYYY-MM-DD), optional tz/provider.
@@ -202,7 +203,7 @@ class WeatherDailyView(APIView):
         serializer = RangeWeatherParamsSerializer(data=request.query_params)
         serializer.is_valid(raise_exception=True)
         params = serializer.validated_data
-        forecasts = await get_daily_forecast(
+        forecasts = async_to_sync(get_daily_forecast)(
             lat=float(params["lat"]),
             lon=float(params["lon"]),
             start=params["start"],
@@ -274,7 +275,7 @@ class WeatherWeeklyView(APIView):
             403: weather_error_schema,
         },
     )
-    async def get(self, request: Request) -> Response:
+    def get(self, request: Request) -> Response:
         """Return weekly aggregates over the supplied date range.
 
         Inputs: lat, lon, start/end dates (YYYY-MM-DD), optional tz/provider.
@@ -285,7 +286,7 @@ class WeatherWeeklyView(APIView):
         serializer = RangeWeatherParamsSerializer(data=request.query_params)
         serializer.is_valid(raise_exception=True)
         params = serializer.validated_data
-        reports = await get_weekly_report(
+        reports = async_to_sync(get_weekly_report)(
             lat=float(params["lat"]),
             lon=float(params["lon"]),
             start=params["start"],

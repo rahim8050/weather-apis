@@ -3,6 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any, cast
 
+from django.utils.text import slugify
 from rest_framework import serializers
 
 from .models import Farm
@@ -66,5 +67,29 @@ class FarmSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 "Centroid requires both centroid_lat and centroid_lon."
             )
+
+        request = self.context.get("request")
+        owner_id = getattr(getattr(request, "user", None), "id", None)
+        if owner_id is not None:
+            name = attrs.get("name") or getattr(self.instance, "name", None)
+            if name:
+                name_qs = Farm.objects.filter(owner_id=owner_id, name=name)
+                if self.instance is not None:
+                    name_qs = name_qs.exclude(id=self.instance.id)
+                if name_qs.exists():
+                    raise serializers.ValidationError(
+                        {"name": "Farm name already exists."}
+                    )
+
+                slug = getattr(self.instance, "slug", None)
+                if not slug:
+                    slug = slugify(name)[:120] or "farm"
+                slug_qs = Farm.objects.filter(owner_id=owner_id, slug=slug)
+                if self.instance is not None:
+                    slug_qs = slug_qs.exclude(id=self.instance.id)
+                if slug_qs.exists():
+                    raise serializers.ValidationError(
+                        {"name": "Farm name conflicts with an existing slug."}
+                    )
 
         return attrs

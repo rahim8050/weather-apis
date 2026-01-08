@@ -124,6 +124,72 @@ Provider notes:
   - `current` is derived from the latest available daily value from a small
     local-day window (today and yesterday; from code: `weather/engines/nasa_power.py`)
 
+## Adding a provider engine
+
+Weather providers are async engines that normalize upstream payloads into the
+dataclasses in `weather/engines/types.py`. The sync API views call async
+services via `async_to_sync`, so new engines should remain async.
+
+### Checklist
+
+1) **Define the provider name**
+   - Add the provider string to `ProviderName` in `weather/engines/types.py`.
+   - Add the name to the allowlist in
+     `BaseWeatherParamsSerializer._allowed_providers()` (in
+     `weather/serializers.py`).
+
+2) **Implement the engine**
+   - Create `weather/engines/<provider>.py` implementing
+     `WeatherProvider` from `weather/engines/base.py`.
+   - Set `name: ProviderName = "<provider>"`.
+   - Implement:
+     - `async def current(self, loc: Location) -> CurrentWeather`
+     - `async def daily(self, loc: Location, start: date, end: date) -> Sequence[DailyForecast]`
+   - Normalize upstream fields into the dataclasses in
+     `weather/engines/types.py` and ensure `source` is the provider name.
+   - Validate timezones with `get_zone()` where applicable (see
+     `weather/timeutils.py`).
+
+3) **Register the provider**
+   - Add it to `build_registry()` in `weather/engines/registry.py`.
+   - Optionally support `WEATHER_PROVIDER_DEFAULT` in `config/settings.py`
+     if you want it as a default.
+
+4) **Add settings (if needed)**
+   - Add base URL / API key env vars in `config/settings.py`.
+   - Never hardcode secrets; read from environment only.
+
+5) **Tests**
+   - Add parsing tests in `weather/tests/test_weather.py` by monkeypatching
+     the provider request method (avoid live network calls).
+   - Add a provider-selection test if you introduce a new default or override.
+
+### Minimal engine skeleton
+
+```python
+from __future__ import annotations
+
+from collections.abc import Sequence
+from datetime import date
+
+from .base import WeatherProvider
+from .types import CurrentWeather, DailyForecast, Location, ProviderName
+
+
+class ExampleProvider(WeatherProvider):
+    name: ProviderName = "example"
+
+    async def current(self, loc: Location) -> CurrentWeather:
+        # Call upstream, parse response, return CurrentWeather.
+        ...
+
+    async def daily(
+        self, loc: Location, start: date, end: date
+    ) -> Sequence[DailyForecast]:
+        # Call upstream, parse response, return DailyForecast list.
+        ...
+```
+
 ## AuthZ / permissions
 
 - Views use `IsAuthenticated` (from code: `weather/views.py`).
@@ -159,4 +225,3 @@ The service layer emits Prometheus metrics (from code: `weather/metrics.py`):
 
 - Tests live in `weather/tests/test_weather.py`.
 - Run: `pytest weather/tests/test_weather.py`
-

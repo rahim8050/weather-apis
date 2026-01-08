@@ -11,7 +11,11 @@ import pytest
 
 from ndvi.engines.base import BBox
 from ndvi.raster.base import RasterRequest
-from ndvi.raster.sentinelhub_engine import SentinelHubRasterEngine
+from ndvi.raster.sentinelhub_engine import (
+    MAX_ERROR_SNIPPET_CHARS,
+    SentinelHubRasterEngine,
+    SentinelHubRasterError,
+)
 from ndvi.raster.stac_compute_engine import StacComputeRasterEngine
 
 CLIENT_SECRET = secrets.token_urlsafe(12)
@@ -158,3 +162,50 @@ def test_sentinelhub_raster_request_zero_attempts() -> None:
         engine._request_with_retry(
             "POST", "https://example.com", json={"ok": True}, max_attempts=0
         )
+
+
+def test_sentinelhub_raster_request_http_error_includes_snippet(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = SentinelHubRasterEngine(
+        client_id="cid",
+        client_secret=CLIENT_SECRET,
+        base_url="https://example.com",
+    )
+    long_body = "error " * 1000
+
+    class FakeResponse:
+        status_code = 400
+
+        def __init__(self) -> None:
+            self.request = httpx.Request("POST", "https://example.com")
+            self._text = long_body
+
+        def raise_for_status(self) -> None:
+            response = httpx.Response(
+                status_code=400,
+                request=self.request,
+                content=self._text.encode(),
+                headers={"Content-Type": "text/plain"},
+            )
+            raise httpx.HTTPStatusError(
+                "boom", request=self.request, response=response
+            )
+
+    def fake_request(*_: object, **__: object) -> FakeResponse:
+        return FakeResponse()
+
+    monkeypatch.setattr(engine._http, "request", fake_request)
+    with pytest.raises(SentinelHubRasterError) as exc_info:
+        engine._request_with_retry(
+            "POST",
+            "https://example.com",
+            json={"ok": True},
+            max_attempts=1,
+        )
+    error = exc_info.value
+    assert error.status_code == 400
+    assert "status=400" in str(error)
+    assert error.snippet is not None
+    assert len(error.snippet) <= MAX_ERROR_SNIPPET_CHARS + 3
+    assert error.snippet.endswith("...")

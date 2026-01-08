@@ -157,11 +157,10 @@ class ApiKeyAuthentication(BaseAuthentication):
         ).update(last_used_at=now)
 
         logger.info(
-            "api_key.auth.success path=%s method=%s status_code=%s ip=%s "
-            "ua=%s user_id=%s key_id=%s",
+            "api_key.auth.success path=%s method=%s ip=%s ua=%s user_id=%s "
+            "key_id=%s",
             getattr(request, "path", ""),
             getattr(request, "method", ""),
-            200,
             _client_ip(request),
             request.META.get("HTTP_USER_AGENT"),
             getattr(api_key, "user_id", None),
