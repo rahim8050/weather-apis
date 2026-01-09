@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import time
 from dataclasses import dataclass
 from urllib.parse import parse_qsl, quote
@@ -28,6 +29,7 @@ INTEGRATIONS_NONCE_HEADER = "X-Nonce"
 INTEGRATIONS_SIGNATURE_HEADER = "X-Signature"
 
 _RFC3986_SAFE = "-_.~"
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +110,37 @@ def compute_hmac_signature_hex(*, secret: bytes, canonical_string: str) -> str:
         hashlib.sha256,
     ).hexdigest()
     return digest
+
+
+def _log_hmac_debug(
+    *,
+    client_id: str,
+    method: str,
+    path: str,
+    body_sha256: str,
+    canonical: str,
+    signature: str,
+    expected_signature: str,
+    secret: bytes,
+) -> None:
+    if not getattr(settings, "NEXTCLOUD_HMAC_DEBUG_LOGGING", False):
+        return
+
+    canonical_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+    secret_fingerprint = hashlib.sha256(secret).hexdigest()[:16]
+    logger.debug(
+        "nextcloud_hmac.debug client_id=%s method=%s path=%s "
+        "body_sha256=%s canonical_sha256=%s secret_sha256=%s "
+        "signature=%s expected_signature=%s",
+        client_id,
+        method.upper(),
+        path,
+        body_sha256,
+        canonical_hash,
+        secret_fingerprint,
+        signature,
+        expected_signature,
+    )
 
 
 def _get_required_headers(request: Request) -> NextcloudHMACHeaders:
@@ -201,20 +234,31 @@ def verify_nextcloud_hmac_request(
             code="method_mismatch",
         )
 
+    body_sha256 = body_sha256_hex(
+        method=method,
+        body=request.body,
+    )
     canonical = build_canonical_string(
         method=method,
         path=request.path,
         query_string=request.META.get("QUERY_STRING", ""),
         timestamp=headers.timestamp,
         nonce=headers.nonce,
-        body_sha256=body_sha256_hex(
-            method=method,
-            body=request.body,
-        ),
+        body_sha256=body_sha256,
     )
     expected_sig = compute_hmac_signature_hex(
         secret=secret,
         canonical_string=canonical,
+    )
+    _log_hmac_debug(
+        client_id=headers.client_id,
+        method=method,
+        path=request.path,
+        body_sha256=body_sha256,
+        canonical=canonical,
+        signature=headers.signature,
+        expected_signature=expected_sig,
+        secret=secret,
     )
     if not hmac.compare_digest(headers.signature, expected_sig):
         normalized_method = method.upper()

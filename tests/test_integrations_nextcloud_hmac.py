@@ -1,23 +1,28 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
+from pathlib import Path
 from typing import Any, TypedDict, cast
 from unittest.mock import patch
 
 from django.conf import settings
 from django.core.cache import caches
-from django.test import SimpleTestCase
+from django.test import RequestFactory, SimpleTestCase
 from django.test.utils import override_settings
 from rest_framework import status
+from rest_framework.request import Request
 from rest_framework.settings import api_settings
 from rest_framework.test import APITestCase
 
 from integrations.hmac import (
+    NextcloudHMACVerificationError,
     body_sha256_hex,
     build_canonical_string,
     canonicalize_query,
     compute_hmac_signature_hex,
+    verify_nextcloud_hmac_request,
 )
 
 _TEST_SIGNING_KEY = b"test-signing-key"
@@ -42,6 +47,13 @@ class _NCHeaders(TypedDict):
     HTTP_X_NC_TIMESTAMP: str
     HTTP_X_NC_NONCE: str
     HTTP_X_NC_SIGNATURE: str
+
+
+def _load_hmac_fixture() -> dict[str, Any]:
+    fixture_path = (
+        Path(__file__).resolve().parent / "fixtures" / "hmac_test_vector.json"
+    )
+    return cast(dict[str, Any], json.loads(fixture_path.read_text()))
 
 
 def _signature_for_request(
@@ -116,6 +128,185 @@ class NextcloudHMACContractTests(SimpleTestCase):
             canonicalize_query("k=z&k=%C3%A9"),
             "k=%C3%A9&k=z",
         )
+
+    def test_golden_vector_fixture_matches(self) -> None:
+        fixture = _load_hmac_fixture()
+        body_b64 = cast(str, fixture["body_b64"])
+        body = base64.b64decode(body_b64) if body_b64 else b""
+        body_sha256 = body_sha256_hex(
+            method=cast(str, fixture["method"]),
+            body=body,
+        )
+        self.assertEqual(body_sha256, fixture["expected_body_sha256"])
+
+        canonical = build_canonical_string(
+            method=cast(str, fixture["method"]),
+            path=cast(str, fixture["path"]),
+            query_string=cast(str, fixture["query_string"]),
+            timestamp=cast(int, fixture["timestamp"]),
+            nonce=cast(str, fixture["nonce"]),
+            body_sha256=body_sha256,
+        )
+        self.assertEqual(canonical, fixture["expected_canonical"])
+
+        secret = base64.b64decode(
+            cast(str, fixture["secret_b64"]),
+            validate=True,
+        )
+        signature = compute_hmac_signature_hex(
+            secret=secret,
+            canonical_string=canonical,
+        )
+        self.assertEqual(signature, fixture["expected_signature"])
+
+
+@override_settings(
+    NEXTCLOUD_HMAC_ENABLED=True,
+    NEXTCLOUD_HMAC_MAX_SKEW_SECONDS=300,
+    NEXTCLOUD_HMAC_NONCE_TTL_SECONDS=360,
+    NEXTCLOUD_HMAC_CACHE_ALIAS="default",
+    INTEGRATION_HMAC_CLIENTS_JSON=_TEST_CLIENTS_JSON,
+    INTEGRATION_LEGACY_CONFIG_ALLOWED=True,
+)
+class NextcloudHMACUnitTests(SimpleTestCase):
+    ping_path = "/api/v1/integrations/nextcloud/ping/"
+
+    def setUp(self) -> None:
+        super().setUp()
+        caches["default"].clear()
+        caches["throttle"].clear()
+
+    def test_invalid_timestamp_header_raises(self) -> None:
+        request = RequestFactory().get(
+            self.ping_path,
+            HTTP_X_NC_CLIENT_ID="nc-test-1",
+            HTTP_X_NC_TIMESTAMP="not-a-number",
+            HTTP_X_NC_NONCE="nonce-1",
+            HTTP_X_NC_SIGNATURE="deadbeef",
+        )
+        with self.assertRaises(NextcloudHMACVerificationError) as ctx:
+            verify_nextcloud_hmac_request(Request(request))
+        self.assertEqual(ctx.exception.code, "skew")
+
+    def test_disabled_hmac_returns_client_id(self) -> None:
+        with override_settings(NEXTCLOUD_HMAC_ENABLED=False):
+            request = RequestFactory().get(
+                self.ping_path,
+                HTTP_X_CLIENT_ID="nc-disabled",
+            )
+            self.assertEqual(
+                verify_nextcloud_hmac_request(Request(request)),
+                "nc-disabled",
+            )
+
+    def test_disabled_hmac_falls_back_to_nextcloud_header(self) -> None:
+        with override_settings(NEXTCLOUD_HMAC_ENABLED=False):
+            request = RequestFactory().get(
+                self.ping_path,
+                HTTP_X_NC_CLIENT_ID="nc-fallback",
+            )
+            self.assertEqual(
+                verify_nextcloud_hmac_request(Request(request)),
+                "nc-fallback",
+            )
+
+    def test_get_body_hash_mismatch_returns_code(self) -> None:
+        now = 1_700_000_000
+        nonce = "nonce-body"
+        body = b'{"a":1}'
+        body_hash = hashlib.sha256(body).hexdigest()
+        canonical = build_canonical_string(
+            method="GET",
+            path=self.ping_path,
+            query_string="",
+            timestamp=now,
+            nonce=nonce,
+            body_sha256=body_hash,
+        )
+        signature = compute_hmac_signature_hex(
+            secret=_TEST_SIGNING_KEY,
+            canonical_string=canonical,
+        )
+        request = RequestFactory().generic(
+            "GET",
+            self.ping_path,
+            data=body,
+            content_type="application/json",
+            HTTP_X_NC_CLIENT_ID="nc-test-1",
+            HTTP_X_NC_TIMESTAMP=str(now),
+            HTTP_X_NC_NONCE=nonce,
+            HTTP_X_NC_SIGNATURE=signature,
+        )
+        with patch("integrations.hmac.time.time", return_value=now):
+            with self.assertRaises(NextcloudHMACVerificationError) as ctx:
+                verify_nextcloud_hmac_request(Request(request))
+        self.assertEqual(ctx.exception.code, "body_hash_mismatch")
+
+    def test_path_mismatch_missing_trailing_slash_returns_code(self) -> None:
+        now = 1_700_000_000
+        nonce = "nonce-path-variant"
+        signature = _signature_for_request(
+            shared_secret=_TEST_SIGNING_KEY,
+            method="GET",
+            path=self.ping_path,
+            query_string="",
+            timestamp=now,
+            nonce=nonce,
+        )
+        request = RequestFactory().get(
+            self.ping_path.rstrip("/"),
+            HTTP_X_NC_CLIENT_ID="nc-test-1",
+            HTTP_X_NC_TIMESTAMP=str(now),
+            HTTP_X_NC_NONCE=nonce,
+            HTTP_X_NC_SIGNATURE=signature,
+        )
+        with patch("integrations.hmac.time.time", return_value=now):
+            with self.assertRaises(NextcloudHMACVerificationError) as ctx:
+                verify_nextcloud_hmac_request(Request(request))
+        self.assertEqual(ctx.exception.code, "path_mismatch")
+
+    def test_missing_request_method_returns_code(self) -> None:
+        now = 1_700_000_000
+        nonce = "nonce-method-missing"
+        request = RequestFactory().get(
+            self.ping_path,
+            HTTP_X_NC_CLIENT_ID="nc-test-1",
+            HTTP_X_NC_TIMESTAMP=str(now),
+            HTTP_X_NC_NONCE=nonce,
+            HTTP_X_NC_SIGNATURE="deadbeef",
+        )
+        request.method = ""
+        with patch("integrations.hmac.time.time", return_value=now):
+            with self.assertRaises(NextcloudHMACVerificationError) as ctx:
+                verify_nextcloud_hmac_request(Request(request))
+        self.assertEqual(ctx.exception.code, "method_mismatch")
+
+    @override_settings(
+        INTEGRATION_HMAC_CLIENTS_JSON=json.dumps(
+            {"nc-test-1": "bmV4dGNsb3VkLWhtYWMtc2VjcmV0"}
+        ),
+        INTEGRATION_LEGACY_CONFIG_ALLOWED=True,
+    )
+    def test_verify_accepts_golden_vector_fixture(self) -> None:
+        fixture = _load_hmac_fixture()
+        body_b64 = cast(str, fixture["body_b64"])
+        body = base64.b64decode(body_b64) if body_b64 else b""
+        request = RequestFactory().generic(
+            "POST",
+            cast(str, fixture["path"]),
+            data=body,
+            content_type="application/json",
+            HTTP_X_CLIENT_ID=cast(str, fixture["client_id"]),
+            HTTP_X_TIMESTAMP=str(fixture["timestamp"]),
+            HTTP_X_NONCE=cast(str, fixture["nonce"]),
+            HTTP_X_SIGNATURE=cast(str, fixture["expected_signature"]),
+        )
+        with patch(
+            "integrations.hmac.time.time",
+            return_value=cast(int, fixture["timestamp"]),
+        ):
+            client_id = verify_nextcloud_hmac_request(Request(request))
+        self.assertEqual(client_id, fixture["client_id"])
 
 
 @override_settings(

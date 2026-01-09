@@ -1,0 +1,14 @@
+{
+  "method": "POST",
+  "path": "/api/v1/integrations/token/",
+  "query_string": "",
+  "timestamp": 1700000000,
+  "nonce": "nonce-00000000-0000-0000-0000-000000000000",
+  "body_b64": "",
+  "client_id": "nc-test-1",
+  "secret_b64": "bmV4dGNsb3VkLWhtYWMtc2VjcmV0",
+  "expected_body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "expected_canonical": "POST\n/api/v1/integrations/token/\n\n1700000000\nnonce-00000000-0000-0000-0000-000000000000\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "expected_signature": "9a31cb345c95194393ac632715518c44cc7c967a2219ccda02f55cbfc1a8d894",
+  "expected_secret_sha256": "f546d80a924c49ec1682c79f1ffebbcd4e6585e3cd4b2ebfab195d4083264ce2"
+}

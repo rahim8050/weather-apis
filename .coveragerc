@@ -1,0 +1,20 @@
+[run]
+branch = False
+source = .
+omit =
+    */.venv/*
+    */venv/*
+    */.mypy_cache/*
+    */.pytest_cache/*
+    */.ruff_cache/*
+    */htmlcov/*
+    */reports/*
+    */logs/*
+    */node_modules/*
+    */staticfiles/*
+    */dist/*
+    */build/*
+
+[report]
+show_missing = True
+skip_covered = False

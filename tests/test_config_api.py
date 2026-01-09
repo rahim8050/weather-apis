@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # ruff: noqa: S101
 from decimal import Decimal
+from typing import Any
 from unittest.mock import patch
 
 from django.test import Client
@@ -9,6 +10,7 @@ from rest_framework.exceptions import Throttled
 from rest_framework.response import Response
 
 from config.api.exceptions import _to_json_value, custom_exception_handler
+from config.api.openapi import remove_deprecated_integration_aliases
 from config.api.responses import error_response
 
 
@@ -59,3 +61,25 @@ def test_home_view_returns_metadata() -> None:
     assert body["ok"] is True
     assert body["service"] == "weather-apis"
     assert body["docs"] == "/api/docs/"
+
+
+def test_remove_deprecated_aliases_ignores_non_dict_paths() -> None:
+    result: dict[str, Any] = {"openapi": "3.0.0", "paths": []}
+    assert (
+        remove_deprecated_integration_aliases(result, None, None, True)
+        == result
+    )
+
+
+def test_remove_deprecated_aliases_strips_deprecated_paths() -> None:
+    result: dict[str, Any] = {
+        "paths": {
+            "/api/v1/integration/ping/": {"get": {}},
+            "/api/v1/integrations/integrations/ping/": {"get": {}},
+            "/api/v1/integrations/nextcloud/ping/": {"get": {}},
+        }
+    }
+    updated = remove_deprecated_integration_aliases(result, None, None, True)
+    assert "/api/v1/integrations/nextcloud/ping/" in updated["paths"]
+    assert "/api/v1/integration/ping/" not in updated["paths"]
+    assert "/api/v1/integrations/integrations/ping/" not in updated["paths"]

@@ -32,6 +32,7 @@ from api_keys.auth import (
 )
 from api_keys.authentication import ApiKeyAuthentication
 from api_keys.models import ApiKey, ApiKeyScope
+from api_keys.openapi import ApiKeyAuthenticationScheme
 from api_keys.permissions import ApiKeyScopePermission, HasValidApiKey
 from api_keys.throttling import ApiKeyRateThrottle
 from api_keys.views import _client_ip as view_client_ip
@@ -721,3 +722,11 @@ class ApiKeyTests(APITestCase):
         api_settings.reload()
         with self.assertRaises(ImproperlyConfigured):
             ApiKeyRateThrottle()
+
+    def test_openapi_security_definition(self) -> None:
+        scheme = ApiKeyAuthenticationScheme(target=ApiKeyAuthentication())
+        definition = scheme.get_security_definition(auto_schema=None)
+        self.assertEqual(
+            definition,
+            {"type": "apiKey", "in": "header", "name": "X-API-Key"},
+        )
