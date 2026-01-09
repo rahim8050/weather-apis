@@ -286,6 +286,8 @@ curl -sS "http://localhost:8000/api/v1/integrations/nextcloud/ping/" \
 ### Integration Security
 
 - HMAC spec: [docs/security/nextcloud-hmac.md](docs/security/nextcloud-hmac.md)
+- HMAC audit: [docs/hmac_audit.md](docs/hmac_audit.md)
+- HMAC clean setup: [docs/hmac_clean_setup.md](docs/hmac_clean_setup.md)
 - Operational runbook: [docs/security/nextcloud-hmac-runbook.md](docs/security/nextcloud-hmac-runbook.md)
 - Password reset: [docs/accounts/password-reset.md](docs/accounts/password-reset.md)
 

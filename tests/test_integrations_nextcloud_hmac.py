@@ -214,6 +214,33 @@ class NextcloudHMACTests(APITestCase):
         self.assertEqual(body["data"]["ok"], True)
         self.assertEqual(body["data"]["client_id"], "nc-test-1")
 
+    @override_settings(
+        INTEGRATION_HMAC_CLIENTS_JSON=json.dumps(
+            {
+                "nc-test-1": base64.b64encode(_KNOWN_GOOD_SIGNING_KEY).decode(
+                    "ascii"
+                )
+            }
+        ),
+        INTEGRATION_LEGACY_CONFIG_ALLOWED=True,
+    )
+    def test_known_good_vector_signature_is_accepted(self) -> None:
+        now = 1_766_666_666
+        nonce = "550e8400-e29b-41d4-a716-446655440000"
+        signature = _KNOWN_GOOD_SIGNATURE
+        with patch("integrations.hmac.time.time", return_value=now):
+            resp = self.client.get(
+                f"{self.ping_url}?a=2&b=two%20words&plus=%2B&a=1",
+                **self._headers(
+                    client_id="nc-test-1",
+                    timestamp=now,
+                    nonce=nonce,
+                    signature=signature,
+                ),
+            )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.content)
+        self.assertEqual(resp.json()["data"]["client_id"], "nc-test-1")
+
     def test_valid_signature_accepts_uppercase_hex(self) -> None:
         now = 1_700_000_000
         nonce = "nonce-uc"
