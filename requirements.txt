@@ -41,7 +41,7 @@ kombu==5.6.1
 librt==0.7.3
 markdown-it-py==4.0.0
 mdurl==0.1.2
-mypy==1.19.0
+mypy==1.19.1
 mypy_extensions==1.1.0
 mysqlclient==2.2.7
 nodeenv==1.9.1
